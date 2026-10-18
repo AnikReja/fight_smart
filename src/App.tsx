@@ -8,6 +8,20 @@ const ACTION_GROUPS = {
 };
 const stamp = (s: number) => `${Math.floor(s / 60).toString().padStart(2, '0')}:${Math.floor(s % 60).toString().padStart(2, '0')}`;
 
+const ACTION_SHORTCUTS: Record<string, string> = {
+  j: "Jab",
+  c: "Cross",
+  h: "Hook",
+  u: "Uppercut",
+  f: "Feint",
+  s: "Slip",
+  r: "Roll",
+  b: "Block",
+  k: "Catch",
+  p: "Parry",
+  m: "Mistake",
+};
+
 export default function App() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
@@ -49,14 +63,58 @@ export default function App() {
     catch { alert('Browser storage is unavailable. Tags will not persist after refresh.'); }
   }
 
-  function addTag() {
-    const v = videoRef.current;
-    if (!v || !storageKey) return;
-    const t: Tag = { id: crypto.randomUUID(), time: v.currentTime, label, note: note.trim() };
-    save([...tags, t].sort((a, b) => a.time - b.time));
-    setNote('');
-    confirmTag(`${label} tagged at ${stamp(t.time)}`);
+
+function addTag(action = label) {
+  const v = videoRef.current;
+  if (!v || !storageKey) return;
+
+  const t: Tag = {
+    id: crypto.randomUUID(),
+    time: v.currentTime,
+    label: action,
+    note: note.trim()
+  };
+
+  save([...tags, t].sort((a, b) => a.time - b.time));
+
+  setNote('');
+  confirmTag(`${action} tagged at ${stamp(t.time)}`);
+}
+
+useEffect(() => {
+  function handleKeyDown(event: KeyboardEvent) {
+    const target = event.target as HTMLElement | null;
+
+    // Ignore shortcuts when typing into a form.
+    if (
+      target?.closest(
+        "input, textarea, select, [contenteditable]"
+      )
+    ) return;
+
+    // Don't interfere with browser shortcuts.
+    if (
+      event.ctrlKey ||
+      event.metaKey ||
+      event.altKey ||
+      event.repeat
+    ) return;
+
+    const action =
+      ACTION_SHORTCUTS[event.key.toLowerCase()];
+
+    if (!action) return;
+
+    event.preventDefault();
+    addTag(action);
   }
+
+  window.addEventListener("keydown", handleKeyDown);
+
+  return () => {
+    window.removeEventListener("keydown", handleKeyDown);
+  };
+});
 
   function seek(seconds: number) {
     const v = videoRef.current;
@@ -91,7 +149,14 @@ export default function App() {
             : <><div className="videoFrame"><video key={videoUrl} ref={videoRef} src={videoUrl} controls playsInline onLoadedMetadata={() => changeSpeed(1)}/></div><div className="filename">{fileName}</div></>}
           <div className="controls"><button disabled={!videoUrl} onClick={() => seek((videoRef.current?.currentTime ?? 0) - 5)}>↶ 5 sec</button><label>Playback <select value={speed} disabled={!videoUrl} onChange={e => changeSpeed(Number(e.target.value))}><option value={0.5}>0.5×</option><option value={0.75}>0.75×</option><option value={1}>1×</option><option value={1.5}>1.5×</option></select></label><label className="fileButton">Change video<input type="file" accept="video/*" onChange={e => loadVideo(e.target.files?.[0])}/></label></div>
           <div className="divider"/>
-          <h2>Tag a moment</h2><div className="tagForm"><label>Action<select value={label} onChange={e => setLabel(e.target.value)}>{Object.entries(ACTION_GROUPS).map(([group, actions]) => <optgroup key={group} label={group}>{actions.map(action => <option key={action} value={action}>{action}</option>)}</optgroup>)}</select></label><label>Note (optional)<input value={note} onChange={e => setNote(e.target.value)} placeholder="e.g. right hand drops after jab" onKeyDown={e => { if (e.key === 'Enter') addTag(); }}/></label><button className="primary" disabled={!videoUrl} onClick={addTag}>+ Save timestamp</button></div>
+          <h2>Tag a moment</h2><div className="tagForm"><label>Action<select value={label} onChange={e => setLabel(e.target.value)}>{Object.entries(ACTION_GROUPS).map(([group, actions]) => <optgroup key={group} label={group}>{actions.map(action => <option key={action} value={action}>{action}</option>)}</optgroup>)}</select></label><label>Note (optional)<input value={note} onChange={e => setNote(e.target.value)} placeholder="e.g. right hand drops after jab" onKeyDown={e => { if (e.key === 'Enter') addTag(); }}/></label>
+<button
+  className="primary"
+  disabled={!videoUrl}
+  onClick={() => addTag()}
+>
+  + Save timestamp
+</button></div>
         </section>
         <aside className="panel"><div className="panelTitle"><h2>Tagged moments</h2><strong className="count">{tags.length}</strong></div><p className="hint">Click a timestamp to jump to that moment in your video.</p>
           {tags.length === 0 ? <div className="empty">Your event timeline starts here.<br/>Play a video and add your first tag.</div> : <div className="events">{tags.map(tag => <div className="event" key={tag.id}><button className="timestamp" onClick={() => seek(tag.time)}>{stamp(tag.time)} ▶</button><div className="eventText"><strong>{tag.label}</strong>{tag.note && <p>{tag.note}</p>}</div><button className="delete" title="Delete tag" aria-label={`Delete ${tag.label} at ${stamp(tag.time)}`} onClick={() => save(tags.filter(x => x.id !== tag.id))}>×</button></div>)}</div>}
