@@ -107,6 +107,77 @@ export default function App() {
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);  
   const combinations = detectCombinations(tags);
 
+const [statsFighter, setStatsFighter] =
+  useState<'you' | 'opponent'>('you');
+
+const DEFENSE_MOVES = [
+  'Slip', 'Roll', 'Block', 'Catch',
+  'Parry', 'Pull back', 'Step back'
+];
+
+function countActions(
+  events: Tag[],
+  actions: string[]
+) {
+  return actions.map(name => ({
+    name,
+    count: events.filter(t => t.label === name).length
+  }));
+}
+
+const fighterTags = tags.filter(
+  t => t.fighter === statsFighter
+);
+
+const punchCounts = countActions(
+  fighterTags,
+  ['Jab', 'Cross', 'Hook', 'Uppercut']
+);
+
+const defenseCounts = countActions(
+  fighterTags,
+  DEFENSE_MOVES
+);
+
+const totalPunches = punchCounts.reduce(
+  (sum, item) => sum + item.count, 0
+);
+
+const totalDefense = defenseCounts.reduce(
+  (sum, item) => sum + item.count, 0
+);
+
+const feintCount = fighterTags.filter(
+  t => t.label === 'Feint'
+).length;
+
+const fighterCombinations = combinations.filter(
+  c => c.fighter === statsFighter
+);
+
+const confirmedCombinations = fighterCombinations.filter(
+  c => reviews[c.id] === 'confirmed'
+);
+
+const rejectedCombinations = fighterCombinations.filter(
+  c => reviews[c.id] === 'rejected'
+);
+
+const combinationFrequencies = Object.entries(
+  confirmedCombinations.reduce<Record<string, number>>(
+    (counts, combo) => {
+      const name = combo.punches.join(' → ');
+      counts[name] = (counts[name] || 0) + 1;
+      return counts;
+    },
+    {}
+  )
+).sort((a, b) => b[1] - a[1]);
+
+const pendingCombinations = fighterCombinations.filter(
+  c => !reviews[c.id]
+).length;
+
 
   useEffect(() => () => { if (videoUrl) URL.revokeObjectURL(videoUrl); }, [videoUrl]);
   useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
@@ -412,7 +483,131 @@ function reviewCombination(
   + Save timestamp
 </button></div>
         </section>
-        <aside className="panel"><div className="panelTitle"><h2>Tagged moments</h2><strong className="count">{tags.length}</strong></div><p className="hint">Click a timestamp to jump to that moment in your video.</p>
+        <aside className="panel">
+<section className="statsDashboard">
+  <h2>📊 Performance Analytics</h2>
+  <p className="hint">
+    Statistics based on your annotated footage.
+  </p>
+
+  <div className="statsFighterToggle">
+    <button
+      type="button"
+      className={statsFighter === 'you' ? 'activeYou' : ''}
+      onClick={() => setStatsFighter('you')}
+    >
+      You
+    </button>
+
+    <button
+      type="button"
+      className={
+        statsFighter === 'opponent' ? 'activeOpponent' : ''
+      }
+      onClick={() => setStatsFighter('opponent')}
+    >
+      Opponent
+    </button>
+  </div>
+
+  <div className="statsCards">
+    <div className="statCard">
+      <span>Punches tagged</span>
+      <strong>{totalPunches}</strong>
+    </div>
+
+    <div className="statCard">
+      <span>Defensive actions</span>
+      <strong>{totalDefense}</strong>
+    </div>
+
+    <div className="statCard">
+      <span>Confirmed combos</span>
+      <strong>{confirmedCombinations.length}</strong>
+    </div>
+
+    <div className="statCard">
+      <span>Rejected suggestions</span>
+      <strong>{rejectedCombinations.length}</strong>
+    </div>
+  </div>
+
+  <div className="statsBreakdown">
+    <h3>Punch Breakdown</h3>
+
+    {punchCounts.map(item => (
+      <div className="statRow" key={item.name}>
+        <div className="statRowHeader">
+          <span>{item.name}</span>
+          <strong>{item.count}</strong>
+        </div>
+        <div className="statTrack">
+          <div
+            className="statFill punchFill"
+            style={{
+              width: `${
+                totalPunches > 0
+                  ? (item.count / totalPunches) * 100
+                  : 0
+              }%`
+            }}
+          />
+        </div>
+      </div>
+    ))}
+
+    <p className="statsFootnote">
+      Feints tagged: {feintCount}
+    </p>
+  </div>
+
+  <div className="statsBreakdown">
+    <h3>Defensive Breakdown</h3>
+
+    {defenseCounts.map(item => (
+      <div className="statRow" key={item.name}>
+        <div className="statRowHeader">
+          <span>{item.name}</span>
+          <strong>{item.count}</strong>
+        </div>
+        <div className="statTrack">
+          <div
+            className="statFill defenseFill"
+            style={{
+              width: `${
+                totalDefense > 0
+                  ? (item.count / totalDefense) * 100
+                  : 0
+              }%`
+            }}
+          />
+        </div>
+      </div>
+    ))}
+  </div>
+
+  <div className="statsBreakdown">
+    <h3>Most Frequent Confirmed Combos</h3>
+
+    {combinationFrequencies.length === 0 ? (
+      <p className="hint">
+        Confirm some combinations to see patterns here.
+      </p>
+    ) : (
+      combinationFrequencies.map(([name, count]) => (
+        <div className="comboStat" key={name}>
+          <span>{name}</span>
+          <strong>{count}×</strong>
+        </div>
+      ))
+    )}
+
+    <p className="statsFootnote">
+      {pendingCombinations} combinations awaiting review
+    </p>
+  </div>
+</section>
+<div className="panelTitle"><h2>Tagged moments</h2><strong className="count">{tags.length}</strong></div><p className="hint">Click a timestamp to jump to that moment in your video.</p>
           {tags.length === 0 ? <div className="empty">Your event timeline starts here.<br/>Play a video and add your first tag.</div> : <div className="events">{tags.map(tag => <div className="event" key={tag.id}><button className="timestamp" onClick={() => seek(tag.time)}>{stamp(tag.time)} ▶</button><div className="eventText">
 <strong>
   {tag.fighter === 'you'
