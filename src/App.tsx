@@ -36,7 +36,11 @@ const PUNCHES = new Set([
   'Jab', 'Cross', 'Hook', 'Uppercut'
 ]);
 
+
+type ReviewStatus = 'confirmed' | 'rejected';
+
 type Combination = {
+  id: string;
   fighter: 'you' | 'opponent';
   punches: string[];
   start: number;
@@ -50,31 +54,28 @@ function detectCombinations(tags: Tag[]): Combination[] {
   for (const fighter of ['you', 'opponent'] as const) {
     const events = tags
       .filter(t =>
-        t.fighter === fighter &&
-        PUNCHES.has(t.label)
+        t.fighter === fighter && PUNCHES.has(t.label)
       )
       .sort((a, b) => a.time - b.time);
 
     let sequence: Tag[] = [];
 
     function finishSequence() {
-      if (sequence.length >= 2) {
-        results.push({
-          fighter,
-          punches: sequence.map(t => t.label),
-          start: sequence[0].time,
-          end: sequence[sequence.length - 1].time
-        });
-      }
+      if (sequence.length < 2) return;
+
+      results.push({
+        id: `${fighter}:${sequence.map(t => t.id).join(':')}`,
+        fighter,
+        punches: sequence.map(t => t.label),
+        start: sequence[0].time,
+        end: sequence[sequence.length - 1].time
+      });
     }
 
     for (const event of events) {
       const previous = sequence[sequence.length - 1];
 
-      if (
-        previous &&
-        event.time - previous.time > MAX_GAP
-      ) {
+      if (previous && event.time - previous.time > MAX_GAP) {
         finishSequence();
         sequence = [];
       }
@@ -88,12 +89,16 @@ function detectCombinations(tags: Tag[]): Combination[] {
   return results.sort((a, b) => a.start - b.start);
 }
 
+
 export default function App() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [fileName, setFileName] = useState('');
   const [storageKey, setStorageKey] = useState('');
   const [tags, setTags] = useState<Tag[]>([]);
+  const [reviews, setReviews] = useState<
+    Record<string, ReviewStatus>
+  >({});
   const [label, setLabel] = useState('Jab');
   const [fighter, setFighter] = useState<Fighter>('you');
   const [note, setNote] = useState('');
@@ -124,6 +129,23 @@ export default function App() {
       const saved = JSON.parse(localStorage.getItem(key) || '[]') as Tag[];
       setTags(Array.isArray(saved) ? saved : []);
     } catch { setTags([]); }
+
+try {
+  const savedReviews = JSON.parse(
+    localStorage.getItem(`${key}:reviews`) || '{}'
+  );
+
+  setReviews(
+    savedReviews &&
+    typeof savedReviews === 'object' &&
+    !Array.isArray(savedReviews)
+      ? savedReviews
+      : {}
+  );
+} catch {
+  setReviews({});
+}
+
   }
 
   function save(next: Tag[]) {
@@ -254,6 +276,34 @@ if (event.key === 'ArrowRight') {
     if (videoRef.current) videoRef.current.playbackRate = next;
   }
 
+function reviewCombination(
+  id: string,
+  decision: ReviewStatus | null
+) {
+  if (!storageKey) return;
+
+  setReviews(previous => {
+    const updated = { ...previous };
+
+    if (decision === null) {
+      delete updated[id];
+    } else {
+      updated[id] = decision;
+    }
+
+    try {
+      localStorage.setItem(
+        `${storageKey}:reviews`,
+        JSON.stringify(updated)
+      );
+    } catch {
+      alert('Could not save combination review.');
+    }
+
+    return updated;
+  });
+}
+
   function exportTags() {
     const data = JSON.stringify({ videoName: fileName, tags }, null, 2);
     const url = URL.createObjectURL(new Blob([data], { type: 'application/json' }));
@@ -375,6 +425,7 @@ if (event.key === 'ArrowRight') {
 </strong>
 {tag.note && <p>{tag.note}</p>}</div><button className="delete" title="Delete tag" aria-label={`Delete ${tag.label} at ${stamp(tag.time)}`} onClick={() => save(tags.filter(x => x.id !== tag.id))}>×</button></div>)}</div>}
           
+
 <div className="combinationSection">
   <h3>🥊 Potential Combinations</h3>
 
@@ -384,25 +435,80 @@ if (event.key === 'ArrowRight') {
     </p>
   ) : (
     <div className="combinationList">
-      {combinations.map((combo, index) => (
-        <button
-          key={`${combo.fighter}-${combo.start}-${index}`}
-          className="combinationCard"
-          onClick={() => seek(combo.start)}
-        >
-          <span className="comboFighter">
-            {combo.fighter === 'you' ? 'You' : 'Opponent'}
-          </span>
+      {combinations.map(combo => {
+        const status = reviews[combo.id];
 
-          <strong>
-            {combo.punches.join(' → ')}
-          </strong>
+        return (
+          <div
+            key={combo.id}
+            className="combinationCard"
+          >
+            <div className="comboHeader">
+              <span className="comboFighter">
+                {combo.fighter === 'you'
+                  ? 'You'
+                  : 'Opponent'}
+              </span>
 
-          <span className="comboTime">
-            {stamp(combo.start)} – {stamp(combo.end)}
-          </span>
-        </button>
-      ))}
+              <span className={`reviewBadge ${status || 'pending'}`}>
+                {status === 'confirmed'
+                  ? '✓ Confirmed'
+                  : status === 'rejected'
+                    ? '✕ Rejected'
+                    : 'Needs review'}
+              </span>
+            </div>
+
+            <strong>
+              {combo.punches.join(' → ')}
+            </strong>
+
+            <button
+              type="button"
+              className="comboTime"
+              onClick={() => seek(combo.start)}
+            >
+              ▶ Review at {stamp(combo.start)}
+            </button>
+
+            <div className="reviewButtons">
+              <button
+                type="button"
+                className="confirmButton"
+                aria-pressed={status === 'confirmed'}
+                onClick={() =>
+                  reviewCombination(combo.id, 'confirmed')
+                }
+              >
+                ✓ Confirm
+              </button>
+
+              <button
+                type="button"
+                className="rejectButton"
+                aria-pressed={status === 'rejected'}
+                onClick={() =>
+                  reviewCombination(combo.id, 'rejected')
+                }
+              >
+                ✕ Reject
+              </button>
+            </div>
+
+            {status && (
+              <button
+                type="button"
+                className="undoReview"
+                onClick={() =>
+                  reviewCombination(combo.id, null)
+                }
+              >
+                Undo decision
+              </button>
+            )}
+          </div>
+        );
+      })}
     </div>
   )}
 </div>

@@ -184,3 +184,86 @@
   font-size: 12px;
   color: #94a3b8;
 }
+
+/* Combination review controls */
+
+.comboHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+
+.reviewBadge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 5px 9px;
+  border-radius: 6px;
+  background: #374151;
+  color: #d1d5db;
+}
+
+.reviewBadge.confirmed {
+  background: #14532d;
+  color: #86efac;
+}
+
+.reviewBadge.rejected {
+  background: #7f1d1d;
+  color: #fca5a5;
+}
+
+.reviewButtons {
+  display: flex;
+  width: 100%;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.reviewButtons button {
+  flex: 1;
+  padding: 10px;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.confirmButton {
+  background: #166534;
+  border: 1px solid #22c55e;
+  color: white;
+}
+
+.rejectButton {
+  background: #7f1d1d;
+  border: 1px solid #ef4444;
+  color: white;
+}
+
+.reviewButtons button:hover {
+  filter: brightness(1.2);
+}
+
+.reviewButtons button[aria-pressed="true"] {
+  outline: 2px solid white;
+  outline-offset: 2px;
+}
+
+.combinationCard .comboTime {
+  background: transparent;
+  border: none;
+  padding: 4px 0;
+  text-decoration: underline;
+  cursor: pointer;
+  text-align: left;
+}
+
+.undoReview {
+  background: transparent;
+  border: none;
+  color: #93c5fd;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 4px 0;
+}
