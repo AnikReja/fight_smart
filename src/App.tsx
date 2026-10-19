@@ -1,6 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 
-type Tag = { id: string; time: number; label: string; note: string };
+
+type Fighter = 'you' | 'opponent';
+
+type Tag = {
+  id: string;
+  time: number;
+  label: string;
+  note: string;
+  fighter?: Fighter;
+};
+
 const ACTION_GROUPS = {
   Punches: ['Jab', 'Cross', 'Hook', 'Uppercut', 'Feint'],
   Defense: ['Slip', 'Roll', 'Block', 'Catch', 'Parry', 'Pull back', 'Step back'],
@@ -29,6 +39,7 @@ export default function App() {
   const [storageKey, setStorageKey] = useState('');
   const [tags, setTags] = useState<Tag[]>([]);
   const [label, setLabel] = useState('Jab');
+  const [fighter, setFighter] = useState<Fighter>('you');
   const [note, setNote] = useState('');
   const [speed, setSpeed] = useState(1);
   const [toast, setToast] = useState('');
@@ -64,6 +75,7 @@ export default function App() {
   }
 
 
+
 function addTag(action = label) {
   const v = videoRef.current;
   if (!v || !storageKey) return;
@@ -72,14 +84,22 @@ function addTag(action = label) {
     id: crypto.randomUUID(),
     time: v.currentTime,
     label: action,
-    note: note.trim()
+    note: note.trim(),
+    fighter: fighter
   };
 
   save([...tags, t].sort((a, b) => a.time - b.time));
 
   setNote('');
-  confirmTag(`${action} tagged at ${stamp(t.time)}`);
+
+  const fighterName =
+    fighter === 'you' ? 'You' : 'Opponent';
+
+  confirmTag(
+    `${fighterName}: ${action} tagged at ${stamp(t.time)}`
+  );
 }
+
 
 useEffect(() => {
   function handleKeyDown(event: KeyboardEvent) {
@@ -99,6 +119,55 @@ useEffect(() => {
       event.altKey ||
       event.repeat
     ) return;
+
+if (event.key === '1') {
+  event.preventDefault();
+  setFighter('you');
+  return;
+}
+
+if (event.key === '2') {
+  event.preventDefault();
+  setFighter('opponent');
+  return;
+}
+
+const video = videoRef.current;
+
+// Spacebar: Play / Pause
+if (event.code === 'Space') {
+  if (!video) return;
+
+  event.preventDefault();
+
+  if (video.paused) {
+    void video.play().catch(() => {
+      console.log('Unable to play video');
+    });
+  } else {
+    video.pause();
+  }
+
+  return;
+}
+
+// Left Arrow: Rewind 5 seconds
+if (event.key === 'ArrowLeft') {
+  if (!video) return;
+
+  event.preventDefault();
+  seek(video.currentTime - 5);
+  return;
+}
+
+// Right Arrow: Forward 5 seconds
+if (event.key === 'ArrowRight') {
+  if (!video) return;
+
+  event.preventDefault();
+  seek(video.currentTime + 5);
+  return;
+}
 
     const action =
       ACTION_SHORTCUTS[event.key.toLowerCase()];
@@ -149,7 +218,84 @@ useEffect(() => {
             : <><div className="videoFrame"><video key={videoUrl} ref={videoRef} src={videoUrl} controls playsInline onLoadedMetadata={() => changeSpeed(1)}/></div><div className="filename">{fileName}</div></>}
           <div className="controls"><button disabled={!videoUrl} onClick={() => seek((videoRef.current?.currentTime ?? 0) - 5)}>↶ 5 sec</button><label>Playback <select value={speed} disabled={!videoUrl} onChange={e => changeSpeed(Number(e.target.value))}><option value={0.5}>0.5×</option><option value={0.75}>0.75×</option><option value={1}>1×</option><option value={1.5}>1.5×</option></select></label><label className="fileButton">Change video<input type="file" accept="video/*" onChange={e => loadVideo(e.target.files?.[0])}/></label></div>
           <div className="divider"/>
-          <h2>Tag a moment</h2><div className="tagForm"><label>Action<select value={label} onChange={e => setLabel(e.target.value)}>{Object.entries(ACTION_GROUPS).map(([group, actions]) => <optgroup key={group} label={group}>{actions.map(action => <option key={action} value={action}>{action}</option>)}</optgroup>)}</select></label><label>Note (optional)<input value={note} onChange={e => setNote(e.target.value)} placeholder="e.g. right hand drops after jab" onKeyDown={e => { if (e.key === 'Enter') addTag(); }}/></label>
+
+<details className="shortcutPanel" open>
+  <summary>⌨ Keyboard Shortcuts</summary>
+
+  <div className="shortcutGrid">
+    <div>
+      <h4>Fighter</h4>
+      <p>You <kbd>1</kbd></p>
+      <p>Opponent <kbd>2</kbd></p>
+
+      <h4>Defense</h4>
+      <p>Slip <kbd>S</kbd></p>
+      <p>Roll <kbd>R</kbd></p>
+      <p>Block <kbd>B</kbd></p>
+      <p>Catch <kbd>K</kbd></p>
+      <p>Parry <kbd>P</kbd></p>
+    </div>
+
+    <div>
+      <h4>Punches</h4>
+      <p>Jab <kbd>J</kbd></p>
+      <p>Cross <kbd>C</kbd></p>
+      <p>Hook <kbd>H</kbd></p>
+      <p>Uppercut <kbd>U</kbd></p>
+      <p>Feint <kbd>F</kbd></p>
+
+      <h4>Other</h4>
+      <p>Mistake <kbd>M</kbd></p>
+
+<h4>Video Controls</h4>
+
+<p>
+  Play / Pause <kbd>Space</kbd>
+</p>
+
+<p>
+  Rewind 5 sec <kbd>←</kbd>
+</p>
+
+<p>
+  Forward 5 sec <kbd>→</kbd>
+</p>
+ 
+    </div>
+  </div>
+
+  <p className="shortcutHint">
+    Shortcuts work when you're not typing in a text field.
+  </p>
+</details>
+
+          <h2>Tag a moment</h2>
+<div className="fighterSelector">
+  <span className="fighterLabel">
+    Who performed the action?
+  </span>
+
+  <div className="fighterButtons">
+    <button
+      type="button"
+      className={fighter === 'you' ? 'fighterActive' : ''}
+      aria-pressed={fighter === 'you'}
+      onClick={() => setFighter('you')}
+    >
+      You
+    </button>
+
+    <button
+      type="button"
+      className={fighter === 'opponent' ? 'fighterActive' : ''}
+      aria-pressed={fighter === 'opponent'}
+      onClick={() => setFighter('opponent')}
+    >
+      Opponent
+    </button>
+  </div>
+</div>
+<div className="tagForm"><label>Action<select value={label} onChange={e => setLabel(e.target.value)}>{Object.entries(ACTION_GROUPS).map(([group, actions]) => <optgroup key={group} label={group}>{actions.map(action => <option key={action} value={action}>{action}</option>)}</optgroup>)}</select></label><label>Note (optional)<input value={note} onChange={e => setNote(e.target.value)} placeholder="e.g. right hand drops after jab" onKeyDown={e => { if (e.key === 'Enter') addTag(); }}/></label>
 <button
   className="primary"
   disabled={!videoUrl}
@@ -159,7 +305,17 @@ useEffect(() => {
 </button></div>
         </section>
         <aside className="panel"><div className="panelTitle"><h2>Tagged moments</h2><strong className="count">{tags.length}</strong></div><p className="hint">Click a timestamp to jump to that moment in your video.</p>
-          {tags.length === 0 ? <div className="empty">Your event timeline starts here.<br/>Play a video and add your first tag.</div> : <div className="events">{tags.map(tag => <div className="event" key={tag.id}><button className="timestamp" onClick={() => seek(tag.time)}>{stamp(tag.time)} ▶</button><div className="eventText"><strong>{tag.label}</strong>{tag.note && <p>{tag.note}</p>}</div><button className="delete" title="Delete tag" aria-label={`Delete ${tag.label} at ${stamp(tag.time)}`} onClick={() => save(tags.filter(x => x.id !== tag.id))}>×</button></div>)}</div>}
+          {tags.length === 0 ? <div className="empty">Your event timeline starts here.<br/>Play a video and add your first tag.</div> : <div className="events">{tags.map(tag => <div className="event" key={tag.id}><button className="timestamp" onClick={() => seek(tag.time)}>{stamp(tag.time)} ▶</button><div className="eventText">
+<strong>
+  {tag.fighter === 'you'
+    ? 'You'
+    : tag.fighter === 'opponent'
+      ? 'Opponent'
+      : 'Unassigned'}
+  {' • '}
+  {tag.label}
+</strong>
+{tag.note && <p>{tag.note}</p>}</div><button className="delete" title="Delete tag" aria-label={`Delete ${tag.label} at ${stamp(tag.time)}`} onClick={() => save(tags.filter(x => x.id !== tag.id))}>×</button></div>)}</div>}
           <button className="export" disabled={!tags.length} onClick={exportTags}>↓ Export tags as JSON</button><p className="privacy">Videos stay on your device. Tags are saved in this browser, and can be exported. Re-select the same file to restore its tags.</p>
         </aside>
       </div>
