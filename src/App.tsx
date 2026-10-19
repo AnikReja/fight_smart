@@ -32,6 +32,62 @@ const ACTION_SHORTCUTS: Record<string, string> = {
   m: "Mistake",
 };
 
+const PUNCHES = new Set([
+  'Jab', 'Cross', 'Hook', 'Uppercut'
+]);
+
+type Combination = {
+  fighter: 'you' | 'opponent';
+  punches: string[];
+  start: number;
+  end: number;
+};
+
+function detectCombinations(tags: Tag[]): Combination[] {
+  const results: Combination[] = [];
+  const MAX_GAP = 1.5;
+
+  for (const fighter of ['you', 'opponent'] as const) {
+    const events = tags
+      .filter(t =>
+        t.fighter === fighter &&
+        PUNCHES.has(t.label)
+      )
+      .sort((a, b) => a.time - b.time);
+
+    let sequence: Tag[] = [];
+
+    function finishSequence() {
+      if (sequence.length >= 2) {
+        results.push({
+          fighter,
+          punches: sequence.map(t => t.label),
+          start: sequence[0].time,
+          end: sequence[sequence.length - 1].time
+        });
+      }
+    }
+
+    for (const event of events) {
+      const previous = sequence[sequence.length - 1];
+
+      if (
+        previous &&
+        event.time - previous.time > MAX_GAP
+      ) {
+        finishSequence();
+        sequence = [];
+      }
+
+      sequence.push(event);
+    }
+
+    finishSequence();
+  }
+
+  return results.sort((a, b) => a.start - b.start);
+}
+
 export default function App() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
@@ -43,7 +99,9 @@ export default function App() {
   const [note, setNote] = useState('');
   const [speed, setSpeed] = useState(1);
   const [toast, setToast] = useState('');
-  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);  
+  const combinations = detectCombinations(tags);
+
 
   useEffect(() => () => { if (videoUrl) URL.revokeObjectURL(videoUrl); }, [videoUrl]);
   useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
@@ -316,7 +374,39 @@ if (event.key === 'ArrowRight') {
   {tag.label}
 </strong>
 {tag.note && <p>{tag.note}</p>}</div><button className="delete" title="Delete tag" aria-label={`Delete ${tag.label} at ${stamp(tag.time)}`} onClick={() => save(tags.filter(x => x.id !== tag.id))}>×</button></div>)}</div>}
-          <button className="export" disabled={!tags.length} onClick={exportTags}>↓ Export tags as JSON</button><p className="privacy">Videos stay on your device. Tags are saved in this browser, and can be exported. Re-select the same file to restore its tags.</p>
+          
+<div className="combinationSection">
+  <h3>🥊 Potential Combinations</h3>
+
+  {combinations.length === 0 ? (
+    <p className="hint">
+      Tag consecutive punches to discover combinations.
+    </p>
+  ) : (
+    <div className="combinationList">
+      {combinations.map((combo, index) => (
+        <button
+          key={`${combo.fighter}-${combo.start}-${index}`}
+          className="combinationCard"
+          onClick={() => seek(combo.start)}
+        >
+          <span className="comboFighter">
+            {combo.fighter === 'you' ? 'You' : 'Opponent'}
+          </span>
+
+          <strong>
+            {combo.punches.join(' → ')}
+          </strong>
+
+          <span className="comboTime">
+            {stamp(combo.start)} – {stamp(combo.end)}
+          </span>
+        </button>
+      ))}
+    </div>
+  )}
+</div>
+<button className="export" disabled={!tags.length} onClick={exportTags}>↓ Export tags as JSON</button><p className="privacy">Videos stay on your device. Tags are saved in this browser, and can be exported. Re-select the same file to restore its tags.</p>
         </aside>
       </div>
     </main><footer>CornerIQ • First iteration • No AI claims, just useful film study.</footer>
