@@ -13,3 +13,7 @@ cv/models/
 cv/output/
 __pycache__/
 .pytest_cache/
+
+# Local API server: environment and database (your tags) stay on this machine
+server/.venv/
+server/data/
