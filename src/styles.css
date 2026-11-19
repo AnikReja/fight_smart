@@ -461,3 +461,44 @@ kbd {
   .noteField { flex-direction: column; align-items: stretch; }
   .welcome { padding: 40px 16px; }
 }
+
+/* ---- Patterns ------------------------------------------------------------ */
+.tabs button { padding: 0 10px; }
+.patterns .hint { margin: 0 0 12px; }
+.sectionTitle {
+  margin: 18px 0 8px; font-family: var(--font-body); font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 1.5px; color: var(--accent);
+}
+.findings { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.finding {
+  padding: 10px 12px; background: var(--surface-raised); border: 1px solid var(--border);
+  border-left: 3px solid var(--accent); border-radius: var(--radius-sm);
+}
+.finding p { margin: 0 0 6px; font-size: 13px; line-height: 1.45; }
+.chip.sample { color: var(--changed-text); border-color: var(--accent); text-transform: none; margin-left: 4px; }
+.evidence { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.evidenceChip {
+  height: 22px; padding: 0 7px; font-family: var(--font-mono); font-size: 11px; color: var(--accent);
+  background: var(--surface-sunken); border: 1px solid var(--border-strong); border-radius: 999px;
+}
+.evidenceChip:hover { border-color: var(--accent); background: var(--surface-hover); }
+.habitList { display: flex; flex-direction: column; gap: 6px; }
+.habit { padding: 8px 10px; background: var(--surface-raised); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.habitHeader { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 6px; font-size: 13px; }
+.habitHeader .mono { color: var(--accent); }
+.distCard {
+  margin-bottom: 8px; padding: 10px 12px;
+  background: var(--surface-raised); border: 1px solid var(--border); border-radius: var(--radius-sm);
+}
+.distHeader { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; font-size: 13px; }
+.distRow summary {
+  display: grid; grid-template-columns: 74px 1fr auto; align-items: center; gap: 8px;
+  padding: 4px 0; font-size: 12px; cursor: pointer; list-style: none;
+}
+.distRow summary::-webkit-details-marker { display: none; }
+.distRow summary:hover { color: var(--accent); }
+.distRow summary .none { color: var(--text-dim); font-style: italic; }
+.distRow[open] summary { color: var(--accent); }
+.distRow .evidence { padding: 2px 0 6px 82px; }
+.distBar { height: 6px; background: var(--surface-sunken); border-radius: 20px; overflow: hidden; }
+.distBar span { display: block; height: 100%; background: var(--accent); border-radius: 20px; }

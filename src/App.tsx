@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { CombinationList } from './components/CombinationList';
+import { PatternsPanel } from './components/PatternsPanel';
 import { RoundBar } from './components/RoundBar';
 import { ShortcutGuide } from './components/ShortcutGuide';
 import { StatsPanel } from './components/StatsPanel';
@@ -18,7 +19,7 @@ import type { Combination, Fighter, Outcome, ReviewStatus, Reviews, Round, Tag }
 
 const fighterName = (f: Fighter) => (f === 'you' ? 'You' : 'Opponent');
 
-type SideTab = 'tags' | 'combos' | 'stats';
+type SideTab = 'tags' | 'combos' | 'stats' | 'patterns';
 
 export default function App() {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -38,6 +39,7 @@ export default function App() {
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [selectedRound, setSelectedRound] = useState<number | null>(null);
   const [statsFighter, setStatsFighter] = useState<Fighter>('you');
+  const [patternFighter, setPatternFighter] = useState<Fighter>('opponent');
   const [toast, setToast] = useState('');
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Most recently added tag, for the outcome (Q/W/E) and undo (Z) shortcuts. */
@@ -286,7 +288,7 @@ export default function App() {
 
   const scopeLabel = selectedRound === null ? 'All rounds' : `Round ${selectedRound}`;
   const videoInput = <input type="file" accept="video/*" onChange={e => { loadVideo(e.target.files?.[0]); e.target.value = ''; }} />;
-  const tabs: [SideTab, string, number | null][] = [['tags', 'Tags', visibleTags.length], ['combos', 'Combos', pendingCombos], ['stats', 'Stats', null]];
+  const tabs: [SideTab, string, number | null][] = [['tags', 'Tags', visibleTags.length], ['combos', 'Combos', pendingCombos], ['stats', 'Stats', null], ['patterns', 'Patterns', null]];
 
   return <div className="app">
     <div className="toast" role="status" aria-live="polite" aria-atomic="true" data-visible={Boolean(toast)}>{toast}</div>
@@ -382,6 +384,10 @@ export default function App() {
             )}
             {sideTab === 'combos' && (
               <CombinationList combinations={visibleCombos} reviews={reviews} onSeek={seek} onReview={reviewCombination} />
+            )}
+            {sideTab === 'patterns' && (
+              <PatternsPanel tags={visibleTags} fighter={patternFighter} scopeLabel={scopeLabel}
+                onFighterChange={setPatternFighter} onSeek={seek} />
             )}
             {sideTab === 'stats' && (
               <StatsPanel stats={stats} fighter={statsFighter} scopeLabel={scopeLabel} onFighterChange={setStatsFighter} />
