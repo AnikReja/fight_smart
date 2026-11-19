@@ -15,6 +15,7 @@ Built with React + TypeScript (Vite). Runs entirely in your browser; videos neve
 - **Combination suggestions:** punches by the same fighter within 1.5s are suggested as combos for you to confirm or reject; if the punches change after review, the combo is flagged for re-review instead of silently losing your decision
 - **Per-fighter analytics:** punch and defense breakdowns, accuracy, most frequent confirmed combos
 - **Pattern analytics (scouting):** repeated action sequences, what a fighter does after each action, and how the other fighter responds within 1s. Every number links to the moments it came from, and patterns with fewer than 5 examples are flagged as small samples
+- **Trends across sessions (Library → Trends):** punches per minute of round time, accuracy, share of punches thrown in combinations, share of the other fighter's punches you defended, and feints per minute, for every sparring (or scouting) session, with the latest session compared against all earlier ones. Comparisons pool raw counts instead of averaging percentages, and small samples are starred
 - **Library (optional local server):** sessions that hold several videos, stored in SQLite on your computer; tags sync automatically, and the app keeps working browser-only when the server is off
 - **Import / export:** versioned JSON (schema v2) with tags, combo decisions, and rounds; imports also accept files from older versions and merge without deleting anything
 
@@ -78,11 +79,12 @@ Shortcuts are ignored while typing in a text field.
 ```
 src/
   App.tsx                 # State, persistence, keyboard shortcuts, layout
-  components/             # TagPad, TimelineStrip, RoundBar, TagList (+ editor), CombinationList, StatsPanel, PatternsPanel, LibraryPanel, ShortcutGuide
+  components/             # TagPad, TimelineStrip, RoundBar, TagList (+ editor), CombinationList, StatsPanel, PatternsPanel, LibraryPanel, TrendsView, ShortcutGuide
   lib/                    # Pure, unit-tested logic (no React)
     combinations.ts       #   combo detection + review matching
     stats.ts              #   per-fighter statistics and accuracy
     patterns.ts           #   sequence mining, follow-ups, responses, evidence-backed insights
+    trends.ts             #   per-session measures as pooled ratios, latest vs. earlier sessions
     rounds.ts             #   round numbering, lookup, start/end
     dataFile.ts           #   versioned import/export, validation, merge
     storage.ts            #   localStorage layout
@@ -108,4 +110,5 @@ cv/                       # computer vision experiments and measured results
 5. ~~Computer vision spike: pose estimation, fighter tracking, measured on local hardware~~ (see [cv/README.md](cv/README.md))
 6. ~~Punch-candidate detection, evaluated against manual tags~~: not reliable yet (held-out F1 0.09 gym camera, 0.28 on 1080p footage)
 7. ~~FastAPI + SQLite library for sessions across multiple videos~~
-8. ~~Pattern analytics with evidence links~~ (scouting report export next)
+8. ~~Pattern analytics with evidence links~~
+9. ~~Cross-session trends~~ (scouting report export next)

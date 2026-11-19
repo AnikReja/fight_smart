@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { api } from '../lib/api';
 import type { Session, SessionDetail, SessionKind, VideoSummary } from '../lib/api';
+import { TrendsView } from './TrendsView';
 
 type Props = {
   open: boolean;
@@ -19,6 +20,7 @@ export function LibraryPanel({ open, serverUp, currentVideo, onClose, onVideoCha
   const [sessions, setSessions] = useState<Session[]>([]);
   const [expanded, setExpanded] = useState<SessionDetail | null>(null);
   const [error, setError] = useState('');
+  const [view, setView] = useState<'sessions' | 'trends'>('sessions');
   const [draft, setDraft] = useState({ name: '', date: today(), opponent: '', kind: 'sparring' as SessionKind });
 
   const refresh = useCallback(async () => {
@@ -97,6 +99,11 @@ export function LibraryPanel({ open, serverUp, currentVideo, onClose, onVideoCha
           </div>
         ) : (
           <>
+            <div className="tabs libraryTabs" role="tablist">
+              <button type="button" role="tab" aria-selected={view === 'sessions'} className={view === 'sessions' ? 'on' : ''} onClick={() => setView('sessions')}>Sessions</button>
+              <button type="button" role="tab" aria-selected={view === 'trends'} className={view === 'trends' ? 'on' : ''} onClick={() => setView('trends')}>Trends</button>
+            </div>
+            {view === 'trends' ? <TrendsView /> : <>
             {error && <p className="formError" role="alert">{error}</p>}
 
             {currentVideo && (
@@ -155,6 +162,7 @@ export function LibraryPanel({ open, serverUp, currentVideo, onClose, onVideoCha
                 ))}
               </ul>
             )}
+            </>}
           </>
         )}
       </div>

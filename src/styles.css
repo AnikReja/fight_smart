@@ -518,7 +518,6 @@ kbd {
 @keyframes pulse { 50% { opacity: .3; } }
 @media (prefers-reduced-motion: reduce) { .syncPill.saving .dot { animation: none; } }
 
-.modal.library { width: min(720px, 100%); }
 .serverOff p { margin: 0 0 10px; line-height: 1.5; }
 .serverOff pre {
   margin: 0; padding: 12px; overflow-x: auto; font-family: var(--font-mono); font-size: 12px;
@@ -563,3 +562,31 @@ kbd {
   .currentVideo { grid-template-columns: 1fr; }
   .syncPill { height: 28px; padding: 0 9px; }
 }
+
+/* ---- Trends (Library → Trends) ------------------------------------------ */
+.libraryTabs { padding: 0; margin-bottom: 14px; }
+.modal.library { width: min(880px, 100%); }
+.trends { display: flex; flex-direction: column; gap: 12px; }
+.trendControls { display: flex; gap: 10px; flex-wrap: wrap; }
+.trendControls .statsFighterToggle { flex: 1 1 200px; margin: 0; }
+.smallSample { color: var(--changed-text); }
+.trendCards { display: grid; grid-template-columns: repeat(auto-fill, minmax(135px, 1fr)); gap: 8px; }
+.trendCard {
+  display: flex; flex-direction: column; gap: 4px; padding: 10px 12px;
+  background: var(--surface-sunken); border: 1px solid var(--border); border-radius: var(--radius-sm);
+}
+.trendLabel { color: var(--text-dim); font-size: 12px; }
+.trendCard strong { font-size: 22px; color: var(--text); }
+.trendDelta { font-size: 12px; color: var(--text-muted); }
+.sparkline { display: block; width: 100%; height: 32px; }
+.sparkBase { stroke: var(--border); stroke-width: 1; }
+.sparkLine { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-linejoin: round; }
+.sparkDot { fill: var(--accent); }
+.sparkDot.small { fill: var(--surface-sunken); stroke: var(--accent); stroke-width: 1.2; }
+.trendTableWrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.trendTable { width: 100%; border-collapse: collapse; font-size: 13px; }
+.trendTable th, .trendTable td { padding: 7px 10px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--border); }
+.trendTable th { color: var(--text-dim); font-weight: 600; font-size: 12px; background: var(--surface-sunken); }
+.trendTable th:first-child, .trendTable td:first-child { text-align: left; white-space: normal; min-width: 150px; }
+.trendTable td:first-child { display: flex; flex-direction: column; gap: 2px; }
+.trendTable tr:last-child td { border-bottom: 0; }
