@@ -18,6 +18,7 @@ video ──► pose.py ──► poses.npz ──► appearance.py ──► an
 | 2b | `tracking.py` | Removes duplicate skeletons, links detections into short position-based *tracklets*, then labels whole tracklets as fighter A, B, or someone else by clothing color and on-screen size. |
 | 3 | `candidates.py` | Rule-based punch-candidate detector: fast arm extension relative to the fighter's own torso length and hips. |
 | 4 | `evaluate.py` | Event-level precision / recall against FightSmart tags (±0.4s, one-to-one matching). |
+| 5 | `tune.py` | Grid-searches detector thresholds on one time range, reports the score on a held-out range. |
 | – | `overlay.py` | Review video: tracks A (green) / B (blue), other people gray, candidates circled in gold. |
 
 ## Setup (Windows, Python 3.12)
@@ -45,6 +46,8 @@ cd cv
 .venv/Scripts/python -m fightsmart_cv.batch output/pro
 # after tagging punches in the app and exporting JSON (A/B: which track is you, from the overlay)
 .venv/Scripts/python -m fightsmart_cv.analyze output/round3.npz --out output/round3 --labels round3-fightsmart.json --you A
+# tune thresholds on labels before 105 s, score once on labels after
+.venv/Scripts/python -m fightsmart_cv.tune output/round3.npz output/round3 --labels round3-fightsmart.json --you A --split 105
 ```
 
 ## Measured results
@@ -98,14 +101,47 @@ Coverage with v4: fighter A in 94% of frames, B in 75%, both in 70%. Arms usable
 mostly in clinches and when facing away from the camera. Missing is preferred over wrong: a wrong label
 would silently put one fighter's punches in the other's stats.
 
-### Experiment 3: punch-candidate detection
+### Experiment 3: punch-candidate detection, scored against hand tags
 
-216 candidates over the 4.5-minute round (A 27.7/min, B 20.5/min). **These are unvalidated.** Until a
-labeled segment is evaluated, the counts say nothing about accuracy. One suspicious pattern: 29 candidates
-come in same-fighter "both arms within 0.1 s" pairs, which on review looked like guard adjustments.
+**Labels:** 35 punches hand-tagged in the app between 1:13 and 2:18 (10 by fighter A, 25 by B), at 0.5× speed.
+A prediction counts as correct if it's within ±0.4 s of a tag by the same fighter (one-to-one).
 
-Next: hand-tag punches for ~60 s of this round in the app, export, and run `analyze --labels` for
-precision / recall.
+| Setting | Data scored | Precision | Recall | F1 |
+|---|---|---|---|---|
+| Hand-picked defaults | all 35 labels | 18% | 29% | 0.22 |
+| Defaults | test half (105–138 s, 17 labels) | 7% | 12% | 0.09 |
+| Best of 720 threshold combos, chosen on the tune half (73–105 s) | tune half (where it was chosen) | 32% | 50% | 0.39 |
+| Same chosen thresholds | **test half (never used for choosing)** | **8%** | **12%** | **0.09** |
+
+The tuned thresholds fit the tune half and did not carry over: a textbook **overfitting** result, and the reason
+for keeping a held-out test set. The five best combos on the tune half also disagreed wildly with each other.
+
+**Why it fails:** how well each signal separates tagged-punch moments (±0.4 s) from 300 random other moments,
+as ROC AUC (0.5 = coin flip, 1.0 = perfect):
+
+| Signal | Fighter A (10 punches) | Fighter B (24 punches) |
+|---|---|---|
+| Max arm extension | 0.64 | 0.50 |
+| Extension rise | 0.47 | 0.60 |
+| Max wrist speed | 0.45 | 0.56 |
+
+At ~200 px per fighter, a wrist is a few pixels, and from a high side angle straight punches toward or away from
+the camera are foreshortened. Guard adjustments, parries, and feints produce the same skeleton motion.
+Coarser ideas also failed on this minute: arm activity per 2 s window vs. tagged punches had Spearman −0.16, and
+fighter distance −0.22 (they were in range in 97% of windows).
+
+**Conclusion:** with this camera setup, pose-based punch detection is not reliable enough to suggest punches.
+Tracking *who is where* works (Experiment 2); *what their hands did* does not.
+
+Caveats: small label set (35, only 10 for A); a single annotator; untagged real punches may count as false
+positives; one camera and one round.
+
+What could change the answer (untested):
+1. **Better footage:** a phone on a tripod at chest height, closer, 1080p at 60 fps, so wrists are larger and less blurred.
+2. **Bigger or top-down pose model:** RTMO-m, or crop each tracked fighter, upscale, and run a single-person
+   model (RTMPose) for sharper wrists.
+3. **A learned classifier on pose sequences:** only worth trying once signals separate better than AUC ≈ 0.6
+   and there are hundreds of labels.
 
 ### Speed on this laptop (CPU only)
 
@@ -125,5 +161,9 @@ precision / recall.
   exact-frame comparison would call everything wrong. Each label can match at most one prediction.
 - **Why normalize by torso length:** a fighter far from the camera looks smaller; dividing by their own
   torso makes "arm fully extended" mean the same thing anywhere in the frame.
+- **Overfitting:** choosing settings that fit the examples you looked at rather than the pattern. Detected by
+  scoring on held-out data: here F1 went from 0.39 (tune half) to 0.09 (test half).
+- **ROC AUC:** the probability that a random real punch scores higher than a random non-punch moment. 0.5 means
+  the signal carries no information; it checks a feature before building a detector on it.
 - **Data leakage (for later ML):** when training a classifier, evaluate on rounds/sessions it never saw,
   not on random frames of the same clip. Neighboring frames are nearly identical, which inflates scores.

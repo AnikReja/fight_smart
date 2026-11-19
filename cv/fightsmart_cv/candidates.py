@@ -129,12 +129,23 @@ def arm_signals(series: np.ndarray, times: np.ndarray, side: str, cfg: DetectorC
     return extension, rel
 
 
-def detect(series: np.ndarray, times: np.ndarray, fighter: str, cfg: DetectorConfig = DetectorConfig()) -> list[Candidate]:
+Signals = dict[str, tuple[np.ndarray, np.ndarray]]
+
+
+def all_arm_signals(series: np.ndarray, times: np.ndarray, cfg: DetectorConfig = DetectorConfig()) -> Signals:
+    """Extension and speed for both arms. Depends only on min_conf / interpolation / smoothing, not on the
+    thresholds, so threshold tuning can compute this once and reuse it."""
+    return {side: arm_signals(series, times, side[0], cfg) for side in ("left", "right")}
+
+
+def detect(series: np.ndarray, times: np.ndarray, fighter: str, cfg: DetectorConfig = DetectorConfig(),
+           signals: Signals | None = None) -> list[Candidate]:
     out: list[Candidate] = []
     dt = float(np.median(np.diff(times))) if len(times) > 1 else 1 / 30
     k = max(1, int(round(cfg.rise_window / dt)))
+    signals = signals or all_arm_signals(series, times, cfg)
     for side in ("left", "right"):
-        ext, speed = arm_signals(series, times, "l" if side == "left" else "r", cfg)
+        ext, speed = signals[side]
         found: list[Candidate] = []
         for i in find_peaks(ext):
             lo = max(0, i - k)
