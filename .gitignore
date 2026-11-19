@@ -6,3 +6,10 @@ dist/
 *.webm
 .DS_Store
 tsconfig.tsbuildinfo
+
+# Computer vision experiments: never commit environments, models, or outputs derived from footage
+cv/.venv/
+cv/models/
+cv/output/
+__pycache__/
+.pytest_cache/

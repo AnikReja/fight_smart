@@ -1,0 +1,6 @@
+# Python 3.12 (MediaPipe has no wheels for 3.13+ yet)
+mediapipe==0.10.21      # Apache-2.0; also installs opencv-contrib-python and numpy
+onnxruntime==1.20.1     # MIT; CPU inference for RTMO
+rtmlib==0.0.13          # Apache-2.0; install with --no-deps (its opencv-python would clash with mediapipe's OpenCV)
+tqdm                    # rtmlib dependency
+pytest
