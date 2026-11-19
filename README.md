@@ -15,11 +15,12 @@ Built with React + TypeScript (Vite). Runs entirely in your browser; videos neve
 - **Combination suggestions:** punches by the same fighter within 1.5s are suggested as combos for you to confirm or reject; if the punches change after review, the combo is flagged for re-review instead of silently losing your decision
 - **Per-fighter analytics:** punch and defense breakdowns, accuracy, most frequent confirmed combos
 - **Pattern analytics (scouting):** repeated action sequences, what a fighter does after each action, and how the other fighter responds within 1s. Every number links to the moments it came from, and patterns with fewer than 5 examples are flagged as small samples
+- **Library (optional local server):** sessions that hold several videos, stored in SQLite on your computer; tags sync automatically, and the app keeps working browser-only when the server is off
 - **Import / export:** versioned JSON (schema v2) with tags, combo decisions, and rounds; imports also accept files from older versions and merge without deleting anything
 
 ## Run it
 
-Requires Node.js 20.19+ (or 22.12+).
+Requires Node.js 20.19+ (or 22.12+). On Windows PowerShell, use `npm.cmd` instead of `npm` if scripts are blocked.
 
 ```bash
 npm install
@@ -27,6 +28,32 @@ npm run dev        # start the app (http://localhost:5173)
 npm test           # unit tests (Vitest)
 npm run build      # type-check + production build
 ```
+
+Optional library server (Python 3.12, see [server/README.md](server/README.md)):
+
+```bash
+cd server && py -3.12 -m venv .venv && .venv\Scripts\python -m pip install -r requirements.txt && cd ..
+npm run api        # FastAPI on http://127.0.0.1:8000 (Vite forwards /api to it)
+npm run test:api   # server tests (pytest)
+```
+
+## Architecture
+
+```
+ Browser (React + TypeScript)                         Local machine only
+ ┌───────────────────────────────────────┐   /api    ┌──────────────────────────┐
+ │ UI components                         │──────────►│ FastAPI (server/)        │
+ │ lib/: combos, stats, patterns, rounds │   JSON    │  Pydantic validation     │
+ │       import/export, sync             │◄──────────│  SQLite: sessions,       │
+ │ localStorage (always written first)   │           │  videos, tags, rounds    │
+ └───────────────────────────────────────┘           └──────────────────────────┘
+        ▲ plays the video file from disk (never uploaded)
+
+ cv/ (Python, offline experiments): video → pose (RTMO) → tracking → punch candidates → precision/recall
+```
+
+All analysis that the app shows (stats, combos, patterns) is pure TypeScript computed from tags, so it works the
+same with or without the server.
 
 ## Keyboard shortcuts
 
@@ -51,7 +78,7 @@ Shortcuts are ignored while typing in a text field.
 ```
 src/
   App.tsx                 # State, persistence, keyboard shortcuts, layout
-  components/             # TagPad, TimelineStrip, RoundBar, TagList (+ editor), CombinationList, StatsPanel, PatternsPanel, ShortcutGuide
+  components/             # TagPad, TimelineStrip, RoundBar, TagList (+ editor), CombinationList, StatsPanel, PatternsPanel, LibraryPanel, ShortcutGuide
   lib/                    # Pure, unit-tested logic (no React)
     combinations.ts       #   combo detection + review matching
     stats.ts              #   per-fighter statistics and accuracy
@@ -59,7 +86,10 @@ src/
     rounds.ts             #   round numbering, lookup, start/end
     dataFile.ts           #   versioned import/export, validation, merge
     storage.ts            #   localStorage layout
+    api.ts, sync.ts       #   local server client; reconcile browser vs. server data
     *.test.ts             #   Vitest tests
+server/                   # FastAPI + SQLite library (optional), pytest tests
+cv/                       # computer vision experiments and measured results
 ```
 
 ## Data and privacy
@@ -77,5 +107,5 @@ src/
 4. ~~Rounds and punch outcomes~~
 5. ~~Computer vision spike: pose estimation, fighter tracking, measured on local hardware~~ (see [cv/README.md](cv/README.md))
 6. ~~Punch-candidate detection, evaluated against manual tags~~: not reliable yet (held-out F1 0.09 gym camera, 0.28 on 1080p footage)
-7. FastAPI + SQLite backend for sessions across multiple videos
+7. ~~FastAPI + SQLite library for sessions across multiple videos~~
 8. ~~Pattern analytics with evidence links~~ (scouting report export next)

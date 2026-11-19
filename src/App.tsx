@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { CombinationList } from './components/CombinationList';
+import { LibraryPanel } from './components/LibraryPanel';
 import { PatternsPanel } from './components/PatternsPanel';
 import { RoundBar } from './components/RoundBar';
 import { ShortcutGuide } from './components/ShortcutGuide';
@@ -8,18 +9,36 @@ import { TagList } from './components/TagList';
 import { TagPad } from './components/TagPad';
 import { TimelineStrip } from './components/TimelineStrip';
 import { ACTION_SHORTCUTS, FRAME_SECONDS, OUTCOME_SHORTCUTS, PUNCHES, SPEEDS } from './lib/actions';
+import { api } from './lib/api';
+import type { VideoSummary } from './lib/api';
 import { applyReview, detectCombinations, resolveReview } from './lib/combinations';
 import { buildExport, mergeData, parseImport } from './lib/dataFile';
+import type { VideoData } from './lib/dataFile';
 import { stampPrecise } from './lib/format';
 import { endRound, inRound, numberRounds, roundAt, startRound } from './lib/rounds';
 import type { NumberedRound } from './lib/rounds';
 import { computeFighterStats } from './lib/stats';
+import { reconcile } from './lib/sync';
 import { loadVideoData, saveField, videoStorageKey } from './lib/storage';
 import type { Combination, Fighter, Outcome, ReviewStatus, Reviews, Round, Tag } from './lib/types';
 
 const fighterName = (f: Fighter) => (f === 'you' ? 'You' : 'Opponent');
 
 type SideTab = 'tags' | 'combos' | 'stats' | 'patterns';
+
+/** offline = no local server (browser-only storage still works). */
+type SyncStatus = 'checking' | 'offline' | 'saving' | 'saved' | 'error';
+
+const SYNC_LABEL: Record<SyncStatus, string> = {
+  checking: 'Library…', offline: 'Browser only', saving: 'Saving…', saved: 'Library', error: 'Sync error',
+};
+const SYNC_HELP: Record<SyncStatus, string> = {
+  checking: 'Looking for the local library server',
+  offline: 'No local server running: tags are saved in this browser only. Click for how to start it.',
+  saving: 'Saving to the local library',
+  saved: 'Saved to the local library (and this browser). Click to manage sessions.',
+  error: 'Could not save to the local library; tags are still saved in this browser. Click for details.',
+};
 
 export default function App() {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -40,6 +59,16 @@ export default function App() {
   const [selectedRound, setSelectedRound] = useState<number | null>(null);
   const [statsFighter, setStatsFighter] = useState<Fighter>('you');
   const [patternFighter, setPatternFighter] = useState<Fighter>('opponent');
+  const [serverUp, setServerUp] = useState<boolean | null>(null);
+  const [serverVideo, setServerVideo] = useState<VideoSummary | null>(null);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>('checking');
+  const [showLibrary, setShowLibrary] = useState(false);
+  /** True once server data for the open video has been reconciled; saves before that would overwrite it. */
+  const hydrated = useRef(false);
+  /** Increments per opened video so a slow server reply for an old video is ignored. */
+  const loadToken = useRef(0);
+  /** Latest data, readable from async code without stale closures. */
+  const dataRef = useRef<VideoData>({ tags: [], reviews: {}, rounds: [] });
   const [toast, setToast] = useState('');
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Most recently added tag, for the outcome (Q/W/E) and undo (Z) shortcuts. */
@@ -60,6 +89,24 @@ export default function App() {
 
   useEffect(() => () => { if (videoUrl) URL.revokeObjectURL(videoUrl); }, [videoUrl]);
   useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
+  dataRef.current = { tags, reviews, rounds };
+
+  // Is the optional local server running?
+  useEffect(() => {
+    void api.available().then(ok => { setServerUp(ok); setSyncStatus(ok ? 'saved' : 'offline'); });
+  }, []);
+
+  // Save to the server shortly after any change (debounced: a burst of tags becomes one request).
+  useEffect(() => {
+    if (!serverVideo || !hydrated.current) return;
+    setSyncStatus('saving');
+    const id = serverVideo.id;
+    const payload = { tags, reviews, rounds };
+    const timer = setTimeout(() => {
+      api.putData(id, payload).then(() => setSyncStatus('saved')).catch(() => setSyncStatus('error'));
+    }, 700);
+    return () => clearTimeout(timer);
+  }, [tags, reviews, rounds, serverVideo]);
 
   function notify(message: string) {
     if (toastTimer.current) clearTimeout(toastTimer.current);
@@ -101,6 +148,37 @@ export default function App() {
     setReviews(data.reviews);
     setRounds(data.rounds);
     lastTagId.current = null;
+    hydrated.current = false;
+    setServerVideo(null);
+    void connectToLibrary(file, key, ++loadToken.current);
+  }
+
+  /** Register the video with the local server and reconcile its stored data with the browser's. */
+  async function connectToLibrary(file: File, key: string, token: number) {
+    if (!(await api.available())) { setServerUp(false); setSyncStatus('offline'); return; }
+    setServerUp(true);
+    setSyncStatus('saving');
+    try {
+      const video = await api.registerVideo({ file_name: file.name, size: file.size, last_modified: file.lastModified });
+      const remote = await api.getData(video.id);
+      if (token !== loadToken.current) return; // another video was opened meanwhile
+      const result = reconcile(dataRef.current, remote);
+      if (result.source === 'server' || result.source === 'merged') {
+        setTags(result.data.tags);
+        setReviews(result.data.reviews);
+        setRounds(result.data.rounds);
+        saveField(key, 'tags', result.data.tags);
+        saveField(key, 'reviews', result.data.reviews);
+        saveField(key, 'rounds', result.data.rounds);
+        if (result.source === 'merged') notify('Merged this browser\'s tags with the library');
+        else if (result.data.tags.length) notify(`Loaded ${result.data.tags.length} tags from the library`);
+      }
+      hydrated.current = true;
+      setServerVideo(video); // triggers the save effect, which uploads if needed
+      setSyncStatus('saved');
+    } catch {
+      if (token === loadToken.current) setSyncStatus('error');
+    }
   }
 
   // ---- Video control -----------------------------------------------------
@@ -247,7 +325,7 @@ export default function App() {
     const target = event.target as HTMLElement | null;
     if (target?.closest('input, textarea, select, [contenteditable]')) return; // typing in a form
     if (event.ctrlKey || event.metaKey || event.altKey || event.repeat) return; // browser shortcuts
-    if (showShortcuts) return; // the dialog handles its own keys (Esc)
+    if (showShortcuts || showLibrary) return; // dialogs handle their own keys (Esc)
     if (event.key === '?' || (event.key === '/' && event.shiftKey)) { event.preventDefault(); setShowShortcuts(true); return; }
     const video = videoRef.current;
     const key = event.key.toLowerCase();
@@ -284,6 +362,16 @@ export default function App() {
     return () => window.removeEventListener('keydown', listener);
   }, []);
 
+  const closeLibrary = useCallback(() => setShowLibrary(false), []);
+
+  // Store the video's length in the library once both the length and the server record are known
+  // (either can arrive first).
+  useEffect(() => {
+    if (!serverVideo || serverVideo.duration || !Number.isFinite(duration) || duration <= 0) return;
+    const { file_name, size, last_modified } = serverVideo;
+    void api.registerVideo({ file_name, size, last_modified, duration }).then(setServerVideo).catch(() => undefined);
+  }, [serverVideo, duration]);
+
   // ---- Render ------------------------------------------------------------
 
   const scopeLabel = selectedRound === null ? 'All rounds' : `Round ${selectedRound}`;
@@ -293,6 +381,8 @@ export default function App() {
   return <div className="app">
     <div className="toast" role="status" aria-live="polite" aria-atomic="true" data-visible={Boolean(toast)}>{toast}</div>
     <ShortcutGuide open={showShortcuts} onClose={() => setShowShortcuts(false)} />
+    <LibraryPanel open={showLibrary} serverUp={serverUp} currentVideo={serverVideo} onClose={closeLibrary}
+      onVideoChanged={setServerVideo} />
 
     <header className="topbar">
       <div className="brand">FIGHT<span>SMART</span></div>
@@ -304,6 +394,9 @@ export default function App() {
         </div>
       )}
       <nav className="topActions">
+        <button type="button" className={`syncPill ${syncStatus}`} onClick={() => setShowLibrary(true)} title={SYNC_HELP[syncStatus]}>
+          <span className="dot" />{SYNC_LABEL[syncStatus]}
+        </button>
         {videoUrl && <label className="ghostButton" title="Open a different video"><span className="wideOnly">Change video</span><span className="narrowOnly">Video</span>{videoInput}</label>}
         <label className={`ghostButton${videoUrl ? '' : ' disabled'}`} title="Merge tags from a FightSmart JSON file">
           Import
