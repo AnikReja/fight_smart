@@ -35,17 +35,18 @@ export function TagList({ tags, roundOf, getCurrentTime, onSeek, onUpdate, onDel
           />
         ) : (
           <div className={`event fighter-${tag.fighter ?? 'none'}`} key={tag.id}>
-            <button className="timestamp" onClick={() => onSeek(tag.time)}>{stampPrecise(tag.time)} ▶</button>
+            <button className="timestamp" onClick={() => onSeek(tag.time)} title="Jump to this moment">{stampPrecise(tag.time)}</button>
             <div className="eventText">
-              <strong>
+              <div className="eventTitle">
+                <strong>{tag.label}</strong>
                 <span className="fighterName">{fighterName(tag.fighter)}</span>
-                {' • '}
-                {tag.label}
-              </strong>
-              <span className="eventMeta">
-                {roundOf(tag.time) !== null && <span className="chip">R{roundOf(tag.time)}</span>}
-                {tag.outcome && <span className={`chip outcome-${tag.outcome}`}>{tag.outcome}</span>}
-              </span>
+              </div>
+              {(roundOf(tag.time) !== null || tag.outcome) && (
+                <div className="eventMeta">
+                  {roundOf(tag.time) !== null && <span className="chip">R{roundOf(tag.time)}</span>}
+                  {tag.outcome && <span className={`chip outcome-${tag.outcome}`}>{tag.outcome}</span>}
+                </div>
+              )}
               {tag.note && <p>{tag.note}</p>}
             </div>
             <button className="iconButton" title="Edit tag" aria-label={`Edit ${tag.label} at ${stampPrecise(tag.time)}`} onClick={() => setEditingId(tag.id)}>✎</button>

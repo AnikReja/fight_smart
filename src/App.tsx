@@ -4,8 +4,10 @@ import { RoundBar } from './components/RoundBar';
 import { ShortcutGuide } from './components/ShortcutGuide';
 import { StatsPanel } from './components/StatsPanel';
 import { TagList } from './components/TagList';
-import { ACTION_GROUPS, ACTION_SHORTCUTS, FRAME_SECONDS, OUTCOME_SHORTCUTS, PUNCHES, SPEEDS } from './lib/actions';
-import { applyReview, detectCombinations } from './lib/combinations';
+import { TagPad } from './components/TagPad';
+import { TimelineStrip } from './components/TimelineStrip';
+import { ACTION_SHORTCUTS, FRAME_SECONDS, OUTCOME_SHORTCUTS, PUNCHES, SPEEDS } from './lib/actions';
+import { applyReview, detectCombinations, resolveReview } from './lib/combinations';
 import { buildExport, mergeData, parseImport } from './lib/dataFile';
 import { stampPrecise } from './lib/format';
 import { endRound, inRound, numberRounds, roundAt, startRound } from './lib/rounds';
@@ -16,6 +18,8 @@ import type { Combination, Fighter, Outcome, ReviewStatus, Reviews, Round, Tag }
 
 const fighterName = (f: Fighter) => (f === 'you' ? 'You' : 'Opponent');
 
+type SideTab = 'tags' | 'combos' | 'stats';
+
 export default function App() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
@@ -24,11 +28,14 @@ export default function App() {
   const [tags, setTags] = useState<Tag[]>([]);
   const [reviews, setReviews] = useState<Reviews>({});
   const [rounds, setRounds] = useState<Round[]>([]);
-  const [label, setLabel] = useState('Jab');
   const [fighter, setFighter] = useState<Fighter>('you');
   const [note, setNote] = useState('');
   const [speed, setSpeed] = useState(1);
   const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [paused, setPaused] = useState(true);
+  const [sideTab, setSideTab] = useState<SideTab>('tags');
+  const [showShortcuts, setShowShortcuts] = useState(false);
   const [selectedRound, setSelectedRound] = useState<number | null>(null);
   const [statsFighter, setStatsFighter] = useState<Fighter>('you');
   const [toast, setToast] = useState('');
@@ -43,6 +50,11 @@ export default function App() {
   const visibleCombos = inRound(combinations, rounds, selectedRound, c => c.start);
   const stats = computeFighterStats(visibleTags, visibleCombos, reviews, statsFighter);
   const currentRound = roundAt(rounds, currentTime);
+  const pendingCombos = visibleCombos.filter(c => {
+    const { state } = resolveReview(c, reviews);
+    return state === 'pending' || state === 'changed';
+  }).length;
+  const lastTag = tags.find(t => t.id === lastTagId.current) ?? null;
 
   useEffect(() => () => { if (videoUrl) URL.revokeObjectURL(videoUrl); }, [videoUrl]);
   useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
@@ -80,6 +92,8 @@ export default function App() {
     setVideoUrl(URL.createObjectURL(file));
     setSpeed(1);
     setCurrentTime(0);
+    setDuration(0);
+    setPaused(true);
     setSelectedRound(null);
     setTags(data.tags);
     setReviews(data.reviews);
@@ -119,7 +133,14 @@ export default function App() {
 
   // ---- Tagging -----------------------------------------------------------
 
-  function addTag(action = label) {
+  function togglePlay() {
+    const v = videoRef.current;
+    if (!v) return;
+    if (v.paused) void v.play().catch(() => notify('Unable to play video'));
+    else v.pause();
+  }
+
+  function addTag(action: string) {
     if (!videoRef.current || !storageKey) return;
     const t: Tag = { id: crypto.randomUUID(), time: now(), label: action, note: note.trim(), fighter };
     updateTags([...tags, t].sort((a, b) => a.time - b.time));
@@ -224,6 +245,8 @@ export default function App() {
     const target = event.target as HTMLElement | null;
     if (target?.closest('input, textarea, select, [contenteditable]')) return; // typing in a form
     if (event.ctrlKey || event.metaKey || event.altKey || event.repeat) return; // browser shortcuts
+    if (showShortcuts) return; // the dialog handles its own keys (Esc)
+    if (event.key === '?' || (event.key === '/' && event.shiftKey)) { event.preventDefault(); setShowShortcuts(true); return; }
     const video = videoRef.current;
     const key = event.key.toLowerCase();
 
@@ -234,11 +257,7 @@ export default function App() {
       // When the player itself has focus, the browser's built-in controls already handle Space;
       // handling it here too would play and immediately pause (verified in Chromium).
       if (event.code === 'Space' && target === video) return false;
-      if (event.code === 'Space') {
-        if (video.paused) void video.play().catch(() => notify('Unable to play video'));
-        else video.pause();
-        return true;
-      }
+      if (event.code === 'Space') { togglePlay(); return true; }
       if (key === 'arrowleft') { seek(video.currentTime - (event.shiftKey ? 1 : 5)); return true; }
       if (key === 'arrowright') { seek(video.currentTime + (event.shiftKey ? 1 : 5)); return true; }
       if (key === ',') { stepFrames(-1); return true; }
@@ -266,77 +285,111 @@ export default function App() {
   // ---- Render ------------------------------------------------------------
 
   const scopeLabel = selectedRound === null ? 'All rounds' : `Round ${selectedRound}`;
+  const videoInput = <input type="file" accept="video/*" onChange={e => { loadVideo(e.target.files?.[0]); e.target.value = ''; }} />;
+  const tabs: [SideTab, string, number | null][] = [['tags', 'Tags', visibleTags.length], ['combos', 'Combos', pendingCombos], ['stats', 'Stats', null]];
 
-  return <div className="shell">
-    <div className="toast" role="status" aria-live="polite" aria-atomic="true" data-visible={Boolean(toast)}>{toast ? `✓ ${toast}` : ''}</div>
-    <header><div className="brand">FIGHT<span>SMART</span></div><div className="subtle">Boxing film study</div></header>
-    <main>
-      <section className="intro"><p className="eyebrow">YOUR FILM. YOUR INSIGHTS.</p><h1>Study the moments that matter.</h1><p>Load a sparring video, review it at your pace, and mark anything worth revisiting.</p></section>
-      <div className="columns">
-        <section className="panel">
-          <div className="panelTitle"><h2>Film review</h2><span className="subtle">Local video only</span></div>
-          {!videoUrl
-            ? <label className="drop"><span className="uploadIcon">↑</span><strong>Choose your sparring video</strong><span>MP4, WebM, or other browser-supported format</span><input type="file" accept="video/*" onChange={e => loadVideo(e.target.files?.[0])} /></label>
-            : <>
-                <div className="videoFrame">
-                  <video key={videoUrl} ref={videoRef} src={videoUrl} controls playsInline
-                    onLoadedMetadata={() => changeSpeed(1)}
-                    onTimeUpdate={e => setCurrentTime(e.currentTarget.currentTime)}
-                    onSeeked={e => setCurrentTime(e.currentTarget.currentTime)} />
-                </div>
-                <div className="videoMeta"><span className="filename">{fileName}</span><span className="clock">{stampPrecise(currentTime)}</span></div>
-              </>}
-          <div className="controls">
-            <button disabled={!videoUrl} onClick={() => seek(now() - 5)}>↶ 5 sec</button>
-            <button disabled={!videoUrl} onClick={() => stepFrames(-1)} title="Previous frame (,)">‹ Frame</button>
-            <button disabled={!videoUrl} onClick={() => stepFrames(1)} title="Next frame (.)">Frame ›</button>
-            <label>Playback <select value={speed} disabled={!videoUrl} onChange={e => changeSpeed(Number(e.target.value))}>{SPEEDS.map(s => <option key={s} value={s}>{s}×</option>)}</select></label>
-            <label className="fileButton">Change video<input type="file" accept="video/*" onChange={e => loadVideo(e.target.files?.[0])} /></label>
+  return <div className="app">
+    <div className="toast" role="status" aria-live="polite" aria-atomic="true" data-visible={Boolean(toast)}>{toast}</div>
+    <ShortcutGuide open={showShortcuts} onClose={() => setShowShortcuts(false)} />
+
+    <header className="topbar">
+      <div className="brand">FIGHT<span>SMART</span></div>
+      {videoUrl && (
+        <div className="session">
+          <span className="filename" title={fileName}>{fileName}</span>
+          <span className="clock">{stampPrecise(currentTime)}</span>
+          {currentRound !== null && <span className="chip live">Round {currentRound}</span>}
+        </div>
+      )}
+      <nav className="topActions">
+        {videoUrl && <label className="ghostButton" title="Open a different video"><span className="wideOnly">Change video</span><span className="narrowOnly">Video</span>{videoInput}</label>}
+        <label className={`ghostButton${videoUrl ? '' : ' disabled'}`} title="Merge tags from a FightSmart JSON file">
+          Import
+          <input type="file" accept="application/json,.json" disabled={!videoUrl}
+            onChange={e => { void importData(e.target.files?.[0]); e.target.value = ''; }} />
+        </label>
+        <button type="button" className="ghostButton" disabled={!tags.length && !rounds.length} onClick={exportData}>Export</button>
+        <button type="button" className="ghostButton icon" onClick={() => setShowShortcuts(true)} title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">⌨</button>
+      </nav>
+    </header>
+
+    {!videoUrl ? (
+      <main className="welcome">
+        <p className="eyebrow">YOUR FILM. YOUR INSIGHTS.</p>
+        <h1>Study the moments that matter.</h1>
+        <p className="lede">Tag punches, defense, and rounds from your sparring footage, then see your habits and your opponent's.</p>
+        <label className="drop">
+          <span className="uploadIcon">↑</span>
+          <strong>Choose a sparring video</strong>
+          <span>MP4, WebM, or any format your browser plays · stays on this computer</span>
+          {videoInput}
+        </label>
+        <p className="subtle">Press <kbd>?</kbd> any time for keyboard shortcuts.</p>
+      </main>
+    ) : (
+      <main className="workspace">
+        <section className="stage">
+          <div className="videoFrame">
+            <video key={videoUrl} ref={videoRef} src={videoUrl} controls playsInline
+              onLoadedMetadata={e => { changeSpeed(1); setDuration(e.currentTarget.duration); }}
+              onDurationChange={e => setDuration(e.currentTarget.duration)}
+              onPlay={() => setPaused(false)} onPause={() => setPaused(true)}
+              onTimeUpdate={e => setCurrentTime(e.currentTarget.currentTime)}
+              onSeeked={e => setCurrentTime(e.currentTarget.currentTime)} />
+          </div>
+
+          <TimelineStrip duration={duration} currentTime={currentTime} tags={tags} rounds={numbered}
+            selectedRound={selectedRound} onSeek={seek} />
+
+          <div className="transport">
+            <div className="transportButtons">
+              <button type="button" onClick={() => seek(now() - 5)} title="Back 5 seconds (←)">−5s</button>
+              <button type="button" onClick={() => stepFrames(-1)} title="Previous frame (,)" aria-label="Previous frame">‹</button>
+              <button type="button" className="play" onClick={togglePlay} title="Play / pause (Space)">{paused ? '▶ Play' : '❚❚ Pause'}</button>
+              <button type="button" onClick={() => stepFrames(1)} title="Next frame (.)" aria-label="Next frame">›</button>
+              <button type="button" onClick={() => seek(now() + 5)} title="Forward 5 seconds (→)">+5s</button>
+            </div>
+            <div className="segmented speed" role="radiogroup" aria-label="Playback speed">
+              {SPEEDS.map(s => (
+                <button key={s} type="button" role="radio" aria-checked={speed === s} className={speed === s ? 'on' : ''}
+                  onClick={() => changeSpeed(s)}>{s}×</button>
+              ))}
+            </div>
           </div>
 
           <RoundBar rounds={numbered} selected={selectedRound} current={currentRound} disabled={!videoUrl}
             onSelect={selectRound} onStart={startRoundHere} onEnd={endRoundHere} onDelete={deleteRound} />
 
-          <div className="divider" />
-          <ShortcutGuide />
-
-          <h2>Tag a moment</h2>
-          <div className="fighterSelector">
-            <span className="fighterLabel">Who performed the action?</span>
-            <div className="fighterButtons">
-              <button type="button" className={fighter === 'you' ? 'fighterActive' : ''} aria-pressed={fighter === 'you'} onClick={() => setFighter('you')}>You</button>
-              <button type="button" className={fighter === 'opponent' ? 'fighterActive' : ''} aria-pressed={fighter === 'opponent'} onClick={() => setFighter('opponent')}>Opponent</button>
-            </div>
-          </div>
-          <div className="tagForm">
-            <label>Action<select value={label} onChange={e => setLabel(e.target.value)}>{Object.entries(ACTION_GROUPS).map(([group, actions]) => <optgroup key={group} label={group}>{actions.map(action => <option key={action} value={action}>{action}</option>)}</optgroup>)}</select></label>
-            <label>Note (optional)<input value={note} onChange={e => setNote(e.target.value)} placeholder="e.g. right hand drops after jab" onKeyDown={e => { if (e.key === 'Enter') addTag(); }} /></label>
-            <button className="primary" disabled={!videoUrl} onClick={() => addTag()}>+ Save timestamp</button>
-          </div>
+          <TagPad fighter={fighter} note={note} lastTag={lastTag} disabled={!videoUrl}
+            onFighterChange={setFighter} onNoteChange={setNote} onTag={addTag}
+            onOutcome={setLastOutcome} onUndo={undoLastTag} />
         </section>
 
-        <aside className="panel">
-          <StatsPanel stats={stats} fighter={statsFighter} scopeLabel={scopeLabel} onFighterChange={setStatsFighter} />
-
-          <div className="panelTitle"><h2>Tagged moments</h2><strong className="count">{visibleTags.length}</strong></div>
-          <p className="hint">Click a timestamp to jump there. ✎ edits a tag. {selectedRound !== null && <>Showing <strong className="scope">{scopeLabel}</strong> only.</>}</p>
-          <TagList tags={visibleTags} roundOf={t => roundAt(rounds, t)} getCurrentTime={now}
-            onSeek={seek} onUpdate={updateTag} onDelete={deleteTag} />
-
-          <CombinationList combinations={visibleCombos} reviews={reviews} onSeek={seek} onReview={reviewCombination} />
-
-          <div className="dataButtons">
-            <button className="export" disabled={!tags.length && !rounds.length} onClick={exportData}>↓ Export JSON</button>
-            <label className={`export fileButton${videoUrl ? '' : ' disabled'}`}>
-              ↑ Import JSON
-              <input type="file" accept="application/json,.json" disabled={!videoUrl}
-                onChange={e => { void importData(e.target.files?.[0]); e.target.value = ''; }} />
-            </label>
+        <aside className="sidebar">
+          <div className="tabs" role="tablist">
+            {tabs.map(([id, name, n]) => (
+              <button key={id} type="button" role="tab" aria-selected={sideTab === id} className={sideTab === id ? 'on' : ''}
+                onClick={() => setSideTab(id)}>
+                {name}{n !== null && n > 0 && <span className={`badge${id === 'combos' ? ' attention' : ''}`}>{n}</span>}
+              </button>
+            ))}
+            {selectedRound !== null && <span className="scope tabScope">{scopeLabel}</span>}
           </div>
-          <p className="privacy">Videos stay on your device. Tags, rounds, and combo decisions are saved in this browser. Export JSON as a backup; import merges into the loaded video without deleting anything.</p>
+          <div className="tabBody">
+            {sideTab === 'tags' && (
+              <TagList tags={visibleTags} roundOf={t => roundAt(rounds, t)} getCurrentTime={now}
+                onSeek={seek} onUpdate={updateTag} onDelete={deleteTag} />
+            )}
+            {sideTab === 'combos' && (
+              <CombinationList combinations={visibleCombos} reviews={reviews} onSeek={seek} onReview={reviewCombination} />
+            )}
+            {sideTab === 'stats' && (
+              <StatsPanel stats={stats} fighter={statsFighter} scopeLabel={scopeLabel} onFighterChange={setStatsFighter} />
+            )}
+          </div>
+          <p className="privacy">Saved in this browser only · Export to back up</p>
         </aside>
-      </div>
-    </main>
-    <footer>FightSmart • No AI claims yet, just useful film study.</footer>
+      </main>
+    )}
   </div>;
 }

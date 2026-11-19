@@ -14,7 +14,7 @@ const BADGE = { confirmed: '✓ Confirmed', rejected: '✕ Rejected', changed: '
 export function CombinationList({ combinations, reviews, onSeek, onReview }: Props) {
   return (
     <div className="combinationSection">
-      <h3>🥊 Potential Combinations</h3>
+      <p className="hint">Punches by the same fighter less than 1.5s apart. Confirm the real combinations.</p>
       {combinations.length === 0 ? (
         <p className="hint">Tag consecutive punches to discover combinations.</p>
       ) : (
@@ -27,7 +27,10 @@ export function CombinationList({ combinations, reviews, onSeek, onReview }: Pro
                   <span className="comboFighter">{combo.fighter === 'you' ? 'You' : 'Opponent'}</span>
                   <span className={`reviewBadge ${review.state}`}>{BADGE[review.state]}</span>
                 </div>
-                <strong>{combo.punches.join(' → ')}</strong>
+                <strong className="comboPunches" title={combo.punches.join(' → ')}>
+                  {combo.punches.slice(0, 5).join(' → ')}
+                  {combo.punches.length > 5 && <span className="more"> +{combo.punches.length - 5} more</span>}
+                </strong>
                 {review.state === 'changed' && (
                   <p className="comboChanged">
                     {review.previous === 'mixed'

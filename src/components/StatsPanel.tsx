@@ -28,8 +28,7 @@ export function StatsPanel({ stats, fighter, scopeLabel, onFighterChange }: Prop
   const { outcomes } = stats;
   return (
     <section className="statsDashboard">
-      <h2>📊 Performance Analytics</h2>
-      <p className="hint">Based on your annotated footage · <strong className="scope">{scopeLabel}</strong></p>
+      <p className="hint">From your tags · <strong className="scope">{scopeLabel}</strong></p>
 
       <div className="statsFighterToggle">
         <button type="button" className={fighter === 'you' ? 'activeYou' : ''} onClick={() => onFighterChange('you')}>You</button>
