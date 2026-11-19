@@ -1,9 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
-import { ACTION_GROUPS, ACTION_SHORTCUTS } from './lib/actions';
-import { applyReview, detectCombinations, resolveReview } from './lib/combinations';
-import { stamp } from './lib/format';
+import { CombinationList } from './components/CombinationList';
+import { RoundBar } from './components/RoundBar';
+import { ShortcutGuide } from './components/ShortcutGuide';
+import { StatsPanel } from './components/StatsPanel';
+import { TagList } from './components/TagList';
+import { ACTION_GROUPS, ACTION_SHORTCUTS, FRAME_SECONDS, OUTCOME_SHORTCUTS, PUNCHES, SPEEDS } from './lib/actions';
+import { applyReview, detectCombinations } from './lib/combinations';
+import { buildExport, mergeData, parseImport } from './lib/dataFile';
+import { stampPrecise } from './lib/format';
+import { endRound, inRound, numberRounds, roundAt, startRound } from './lib/rounds';
+import type { NumberedRound } from './lib/rounds';
 import { computeFighterStats } from './lib/stats';
-import type { Combination, Fighter, ReviewStatus, Reviews, Tag } from './lib/types';
+import { loadVideoData, saveField, videoStorageKey } from './lib/storage';
+import type { Combination, Fighter, Outcome, ReviewStatus, Reviews, Round, Tag } from './lib/types';
+
+const fighterName = (f: Fighter) => (f === 'you' ? 'You' : 'Opponent');
 
 export default function App() {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -12,179 +23,86 @@ export default function App() {
   const [storageKey, setStorageKey] = useState('');
   const [tags, setTags] = useState<Tag[]>([]);
   const [reviews, setReviews] = useState<Reviews>({});
+  const [rounds, setRounds] = useState<Round[]>([]);
   const [label, setLabel] = useState('Jab');
   const [fighter, setFighter] = useState<Fighter>('you');
   const [note, setNote] = useState('');
   const [speed, setSpeed] = useState(1);
-  const [toast, setToast] = useState('');
-  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);  
-  const combinations = detectCombinations(tags);
-
+  const [currentTime, setCurrentTime] = useState(0);
+  const [selectedRound, setSelectedRound] = useState<number | null>(null);
   const [statsFighter, setStatsFighter] = useState<Fighter>('you');
-  const stats = computeFighterStats(tags, combinations, reviews, statsFighter);
+  const [toast, setToast] = useState('');
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Most recently added tag, for the outcome (Q/W/E) and undo (Z) shortcuts. */
+  const lastTagId = useRef<string | null>(null);
+
+  // Derived data. Cheap at this scale (hundreds of tags), so recomputed each render.
+  const numbered = numberRounds(rounds);
+  const combinations = detectCombinations(tags);
+  const visibleTags = inRound(tags, rounds, selectedRound, t => t.time);
+  const visibleCombos = inRound(combinations, rounds, selectedRound, c => c.start);
+  const stats = computeFighterStats(visibleTags, visibleCombos, reviews, statsFighter);
+  const currentRound = roundAt(rounds, currentTime);
 
   useEffect(() => () => { if (videoUrl) URL.revokeObjectURL(videoUrl); }, [videoUrl]);
   useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
 
-  function confirmTag(message: string) {
+  function notify(message: string) {
     if (toastTimer.current) clearTimeout(toastTimer.current);
     setToast(message);
     toastTimer.current = setTimeout(() => setToast(''), 2200);
   }
 
+  // ---- Persistence -------------------------------------------------------
+
+  const storageWarning = () => notify('⚠ Browser storage is unavailable. Export JSON to keep your work.');
+
+  function updateTags(next: Tag[]) {
+    setTags(next);
+    if (!saveField(storageKey, 'tags', next)) storageWarning();
+  }
+  function updateReviews(next: Reviews) {
+    setReviews(next);
+    if (!saveField(storageKey, 'reviews', next)) storageWarning();
+  }
+  function updateRounds(next: Round[]) {
+    setRounds(next);
+    if (!saveField(storageKey, 'rounds', next)) storageWarning();
+  }
+
   function loadVideo(file?: File) {
     if (!file) return;
     if (file.type && !file.type.startsWith('video/')) { alert('Please select a video file.'); return; }
-    // Keep the old `corneriq:` prefix so tags saved before the FightSmart rename still load.
-    const key = `corneriq:tags:${file.name}:${file.size}:${file.lastModified}`;
+    const key = videoStorageKey(file);
+    const data = loadVideoData(key);
     setStorageKey(key);
     setFileName(file.name);
     setVideoUrl(URL.createObjectURL(file));
     setSpeed(1);
-    try {
-      const saved = JSON.parse(localStorage.getItem(key) || '[]') as Tag[];
-      setTags(Array.isArray(saved) ? saved : []);
-    } catch { setTags([]); }
-
-try {
-  const savedReviews = JSON.parse(
-    localStorage.getItem(`${key}:reviews`) || '{}'
-  );
-
-  setReviews(
-    savedReviews &&
-    typeof savedReviews === 'object' &&
-    !Array.isArray(savedReviews)
-      ? savedReviews
-      : {}
-  );
-} catch {
-  setReviews({});
-}
-
+    setCurrentTime(0);
+    setSelectedRound(null);
+    setTags(data.tags);
+    setReviews(data.reviews);
+    setRounds(data.rounds);
+    lastTagId.current = null;
   }
 
-  function save(next: Tag[]) {
-    setTags(next);
-    try { localStorage.setItem(storageKey, JSON.stringify(next)); }
-    catch { alert('Browser storage is unavailable. Tags will not persist after refresh.'); }
-  }
+  // ---- Video control -----------------------------------------------------
 
-
-
-function addTag(action = label) {
-  const v = videoRef.current;
-  if (!v || !storageKey) return;
-
-  const t: Tag = {
-    id: crypto.randomUUID(),
-    time: v.currentTime,
-    label: action,
-    note: note.trim(),
-    fighter: fighter
-  };
-
-  save([...tags, t].sort((a, b) => a.time - b.time));
-
-  setNote('');
-
-  const fighterName =
-    fighter === 'you' ? 'You' : 'Opponent';
-
-  confirmTag(
-    `${fighterName}: ${action} tagged at ${stamp(t.time)}`
-  );
-}
-
-
-useEffect(() => {
-  function handleKeyDown(event: KeyboardEvent) {
-    const target = event.target as HTMLElement | null;
-
-    // Ignore shortcuts when typing into a form.
-    if (
-      target?.closest(
-        "input, textarea, select, [contenteditable]"
-      )
-    ) return;
-
-    // Don't interfere with browser shortcuts.
-    if (
-      event.ctrlKey ||
-      event.metaKey ||
-      event.altKey ||
-      event.repeat
-    ) return;
-
-if (event.key === '1') {
-  event.preventDefault();
-  setFighter('you');
-  return;
-}
-
-if (event.key === '2') {
-  event.preventDefault();
-  setFighter('opponent');
-  return;
-}
-
-const video = videoRef.current;
-
-// Spacebar: Play / Pause
-if (event.code === 'Space') {
-  if (!video) return;
-
-  event.preventDefault();
-
-  if (video.paused) {
-    void video.play().catch(() => {
-      console.log('Unable to play video');
-    });
-  } else {
-    video.pause();
-  }
-
-  return;
-}
-
-// Left Arrow: Rewind 5 seconds
-if (event.key === 'ArrowLeft') {
-  if (!video) return;
-
-  event.preventDefault();
-  seek(video.currentTime - 5);
-  return;
-}
-
-// Right Arrow: Forward 5 seconds
-if (event.key === 'ArrowRight') {
-  if (!video) return;
-
-  event.preventDefault();
-  seek(video.currentTime + 5);
-  return;
-}
-
-    const action =
-      ACTION_SHORTCUTS[event.key.toLowerCase()];
-
-    if (!action) return;
-
-    event.preventDefault();
-    addTag(action);
-  }
-
-  window.addEventListener("keydown", handleKeyDown);
-
-  return () => {
-    window.removeEventListener("keydown", handleKeyDown);
-  };
-});
+  const now = () => videoRef.current?.currentTime ?? 0;
 
   function seek(seconds: number) {
     const v = videoRef.current;
     if (!v) return;
     v.currentTime = Math.max(0, Math.min(Number.isFinite(v.duration) ? v.duration : Infinity, seconds));
+    setCurrentTime(v.currentTime);
+  }
+
+  function stepFrames(frames: number) {
+    const v = videoRef.current;
+    if (!v) return;
+    v.pause();
+    seek(v.currentTime + frames * FRAME_SECONDS);
   }
 
   function changeSpeed(next: number) {
@@ -192,363 +110,233 @@ if (event.key === 'ArrowRight') {
     if (videoRef.current) videoRef.current.playbackRate = next;
   }
 
-function reviewCombination(combo: Combination, decision: ReviewStatus | null) {
-  if (!storageKey) return;
-  const updated = applyReview(reviews, combo, decision);
-  setReviews(updated);
-  try {
-    localStorage.setItem(`${storageKey}:reviews`, JSON.stringify(updated));
-  } catch {
-    alert('Could not save combination review.');
+  function nudgeSpeed(direction: 1 | -1) {
+    const index = SPEEDS.indexOf(speed as (typeof SPEEDS)[number]);
+    const next = SPEEDS[Math.max(0, Math.min(SPEEDS.length - 1, (index === -1 ? 3 : index) + direction))];
+    changeSpeed(next);
+    notify(`Playback ${next}×`);
   }
-}
 
-  function exportTags() {
-    const data = JSON.stringify({ videoName: fileName, tags }, null, 2);
+  // ---- Tagging -----------------------------------------------------------
+
+  function addTag(action = label) {
+    if (!videoRef.current || !storageKey) return;
+    const t: Tag = { id: crypto.randomUUID(), time: now(), label: action, note: note.trim(), fighter };
+    updateTags([...tags, t].sort((a, b) => a.time - b.time));
+    lastTagId.current = t.id;
+    setNote('');
+    notify(`${fighterName(fighter)}: ${action} tagged at ${stampPrecise(t.time)}`);
+  }
+
+  function updateTag(next: Tag) {
+    updateTags(tags.map(t => (t.id === next.id ? next : t)).sort((a, b) => a.time - b.time));
+    notify(`Updated ${next.label} at ${stampPrecise(next.time)}`);
+  }
+
+  function deleteTag(tag: Tag) {
+    updateTags(tags.filter(t => t.id !== tag.id));
+    if (lastTagId.current === tag.id) lastTagId.current = null;
+  }
+
+  function setLastOutcome(outcome: Outcome) {
+    const last = tags.find(t => t.id === lastTagId.current);
+    if (!last) { notify('Tag a punch first, then press Q / W / E'); return; }
+    if (!PUNCHES.has(last.label)) { notify(`Outcomes apply to punches, not ${last.label}`); return; }
+    updateTags(tags.map(t => (t.id === last.id ? { ...t, outcome } : t)));
+    notify(`${last.label} at ${stampPrecise(last.time)} → ${outcome}`);
+  }
+
+  function undoLastTag() {
+    const last = tags.find(t => t.id === lastTagId.current);
+    if (!last) { notify('Nothing to undo'); return; }
+    deleteTag(last);
+    notify(`Removed ${last.label} at ${stampPrecise(last.time)}`);
+  }
+
+  function reviewCombination(combo: Combination, decision: ReviewStatus | null) {
+    if (!storageKey) return;
+    updateReviews(applyReview(reviews, combo, decision));
+  }
+
+  // ---- Rounds ------------------------------------------------------------
+
+  function startRoundHere() {
+    if (!storageKey) return;
+    const next = startRound(rounds, now(), crypto.randomUUID());
+    if (next === rounds) { notify('A round already starts here'); return; }
+    updateRounds(next);
+    notify(`Round ${roundAt(next, now())} started at ${stampPrecise(now())}`);
+  }
+
+  function endRoundHere() {
+    const next = endRound(rounds, now());
+    if (next === rounds) { notify('Not inside a round'); return; }
+    notify(`Round ${roundAt(rounds, now())} ended at ${stampPrecise(now())}`);
+    updateRounds(next);
+  }
+
+  function selectRound(round: NumberedRound | null) {
+    setSelectedRound(round ? round.number : null);
+    if (round) seek(round.start);
+  }
+
+  function deleteRound(round: NumberedRound) {
+    if (!confirm(`Delete round ${round.number}? Its tags are kept.`)) return;
+    updateRounds(rounds.filter(r => r.id !== round.id));
+    setSelectedRound(null);
+  }
+
+  // ---- Import / export ---------------------------------------------------
+
+  function exportData() {
+    const data = JSON.stringify(buildExport(fileName, { tags, reviews, rounds }), null, 2);
     const url = URL.createObjectURL(new Blob([data], { type: 'application/json' }));
     const link = document.createElement('a');
     link.href = url;
-    link.download = `${fileName.replace(/\.[^/.]+$/, '') || 'sparring'}-tags.json`;
+    link.download = `${fileName.replace(/\.[^/.]+$/, '') || 'sparring'}-fightsmart.json`;
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
+  async function importData(file?: File) {
+    if (!file) return;
+    if (!storageKey) { alert('Load the matching video first, then import its tags.'); return; }
+    let result;
+    try {
+      result = parseImport(await file.text());
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Could not read that file.');
+      return;
+    }
+    if (result.videoName && result.videoName !== fileName &&
+        !confirm(`This file was exported from "${result.videoName}", but the loaded video is "${fileName}". Import anyway?`)) return;
+    const merged = mergeData({ tags, reviews, rounds }, result);
+    updateTags(merged.tags);
+    updateReviews(merged.reviews);
+    updateRounds(merged.rounds);
+    notify(`Imported ${merged.addedTags} new and ${merged.updatedTags} updated tags` +
+      (result.skipped ? ` · skipped ${result.skipped} invalid items` : ''));
+  }
+
+  // ---- Keyboard ----------------------------------------------------------
+
+  function handleKeyDown(event: KeyboardEvent) {
+    const target = event.target as HTMLElement | null;
+    if (target?.closest('input, textarea, select, [contenteditable]')) return; // typing in a form
+    if (event.ctrlKey || event.metaKey || event.altKey || event.repeat) return; // browser shortcuts
+    const video = videoRef.current;
+    const key = event.key.toLowerCase();
+
+    const handled = (() => {
+      if (key === '1') { setFighter('you'); return true; }
+      if (key === '2') { setFighter('opponent'); return true; }
+      if (!video) return false;
+      // When the player itself has focus, the browser's built-in controls already handle Space;
+      // handling it here too would play and immediately pause (verified in Chromium).
+      if (event.code === 'Space' && target === video) return false;
+      if (event.code === 'Space') {
+        if (video.paused) void video.play().catch(() => notify('Unable to play video'));
+        else video.pause();
+        return true;
+      }
+      if (key === 'arrowleft') { seek(video.currentTime - (event.shiftKey ? 1 : 5)); return true; }
+      if (key === 'arrowright') { seek(video.currentTime + (event.shiftKey ? 1 : 5)); return true; }
+      if (key === ',') { stepFrames(-1); return true; }
+      if (key === '.') { stepFrames(1); return true; }
+      if (key === '[') { nudgeSpeed(-1); return true; }
+      if (key === ']') { nudgeSpeed(1); return true; }
+      if (key === 'n') { if (event.shiftKey) endRoundHere(); else startRoundHere(); return true; }
+      if (key === 'z') { undoLastTag(); return true; }
+      if (OUTCOME_SHORTCUTS[key]) { setLastOutcome(OUTCOME_SHORTCUTS[key]); return true; }
+      if (ACTION_SHORTCUTS[key]) { addTag(ACTION_SHORTCUTS[key]); return true; }
+      return false;
+    })();
+    if (handled) event.preventDefault();
+  }
+
+  // Register the listener once; the ref always points at this render's handler so it sees current state.
+  const keyHandler = useRef(handleKeyDown);
+  keyHandler.current = handleKeyDown;
+  useEffect(() => {
+    const listener = (e: KeyboardEvent) => keyHandler.current(e);
+    window.addEventListener('keydown', listener);
+    return () => window.removeEventListener('keydown', listener);
+  }, []);
+
+  // ---- Render ------------------------------------------------------------
+
+  const scopeLabel = selectedRound === null ? 'All rounds' : `Round ${selectedRound}`;
+
   return <div className="shell">
-    <div className="toast" role="status" aria-live="polite" aria-atomic="true" data-visible={Boolean(toast)}>{toast ? `✓ ${toast}` : ""}</div>
-    <header><div className="brand">FIGHT<span>SMART</span></div><div className="subtle">Boxing film study • Session 01</div></header>
+    <div className="toast" role="status" aria-live="polite" aria-atomic="true" data-visible={Boolean(toast)}>{toast ? `✓ ${toast}` : ''}</div>
+    <header><div className="brand">FIGHT<span>SMART</span></div><div className="subtle">Boxing film study</div></header>
     <main>
       <section className="intro"><p className="eyebrow">YOUR FILM. YOUR INSIGHTS.</p><h1>Study the moments that matter.</h1><p>Load a sparring video, review it at your pace, and mark anything worth revisiting.</p></section>
       <div className="columns">
         <section className="panel">
           <div className="panelTitle"><h2>Film review</h2><span className="subtle">Local video only</span></div>
-          {!videoUrl ? <label className="drop"> <span className="uploadIcon">↑</span><strong>Choose your sparring video</strong><span>MP4, WebM, or other browser-supported format</span><input type="file" accept="video/*" onChange={e => loadVideo(e.target.files?.[0])}/></label>
-            : <><div className="videoFrame"><video key={videoUrl} ref={videoRef} src={videoUrl} controls playsInline onLoadedMetadata={() => changeSpeed(1)}/></div><div className="filename">{fileName}</div></>}
-          <div className="controls"><button disabled={!videoUrl} onClick={() => seek((videoRef.current?.currentTime ?? 0) - 5)}>↶ 5 sec</button><label>Playback <select value={speed} disabled={!videoUrl} onChange={e => changeSpeed(Number(e.target.value))}><option value={0.5}>0.5×</option><option value={0.75}>0.75×</option><option value={1}>1×</option><option value={1.5}>1.5×</option></select></label><label className="fileButton">Change video<input type="file" accept="video/*" onChange={e => loadVideo(e.target.files?.[0])}/></label></div>
-          <div className="divider"/>
+          {!videoUrl
+            ? <label className="drop"><span className="uploadIcon">↑</span><strong>Choose your sparring video</strong><span>MP4, WebM, or other browser-supported format</span><input type="file" accept="video/*" onChange={e => loadVideo(e.target.files?.[0])} /></label>
+            : <>
+                <div className="videoFrame">
+                  <video key={videoUrl} ref={videoRef} src={videoUrl} controls playsInline
+                    onLoadedMetadata={() => changeSpeed(1)}
+                    onTimeUpdate={e => setCurrentTime(e.currentTarget.currentTime)}
+                    onSeeked={e => setCurrentTime(e.currentTarget.currentTime)} />
+                </div>
+                <div className="videoMeta"><span className="filename">{fileName}</span><span className="clock">{stampPrecise(currentTime)}</span></div>
+              </>}
+          <div className="controls">
+            <button disabled={!videoUrl} onClick={() => seek(now() - 5)}>↶ 5 sec</button>
+            <button disabled={!videoUrl} onClick={() => stepFrames(-1)} title="Previous frame (,)">‹ Frame</button>
+            <button disabled={!videoUrl} onClick={() => stepFrames(1)} title="Next frame (.)">Frame ›</button>
+            <label>Playback <select value={speed} disabled={!videoUrl} onChange={e => changeSpeed(Number(e.target.value))}>{SPEEDS.map(s => <option key={s} value={s}>{s}×</option>)}</select></label>
+            <label className="fileButton">Change video<input type="file" accept="video/*" onChange={e => loadVideo(e.target.files?.[0])} /></label>
+          </div>
 
-<details className="shortcutPanel" open>
-  <summary>⌨ Keyboard Shortcuts</summary>
+          <RoundBar rounds={numbered} selected={selectedRound} current={currentRound} disabled={!videoUrl}
+            onSelect={selectRound} onStart={startRoundHere} onEnd={endRoundHere} onDelete={deleteRound} />
 
-  <div className="shortcutGrid">
-    <div>
-      <h4>Fighter</h4>
-      <p>You <kbd>1</kbd></p>
-      <p>Opponent <kbd>2</kbd></p>
-
-      <h4>Defense</h4>
-      <p>Slip <kbd>S</kbd></p>
-      <p>Roll <kbd>R</kbd></p>
-      <p>Block <kbd>B</kbd></p>
-      <p>Catch <kbd>K</kbd></p>
-      <p>Parry <kbd>P</kbd></p>
-    </div>
-
-    <div>
-      <h4>Punches</h4>
-      <p>Jab <kbd>J</kbd></p>
-      <p>Cross <kbd>C</kbd></p>
-      <p>Hook <kbd>H</kbd></p>
-      <p>Uppercut <kbd>U</kbd></p>
-      <p>Feint <kbd>F</kbd></p>
-
-      <h4>Other</h4>
-      <p>Mistake <kbd>M</kbd></p>
-
-<h4>Video Controls</h4>
-
-<p>
-  Play / Pause <kbd>Space</kbd>
-</p>
-
-<p>
-  Rewind 5 sec <kbd>←</kbd>
-</p>
-
-<p>
-  Forward 5 sec <kbd>→</kbd>
-</p>
- 
-    </div>
-  </div>
-
-  <p className="shortcutHint">
-    Shortcuts work when you're not typing in a text field.
-  </p>
-</details>
+          <div className="divider" />
+          <ShortcutGuide />
 
           <h2>Tag a moment</h2>
-<div className="fighterSelector">
-  <span className="fighterLabel">
-    Who performed the action?
-  </span>
-
-  <div className="fighterButtons">
-    <button
-      type="button"
-      className={fighter === 'you' ? 'fighterActive' : ''}
-      aria-pressed={fighter === 'you'}
-      onClick={() => setFighter('you')}
-    >
-      You
-    </button>
-
-    <button
-      type="button"
-      className={fighter === 'opponent' ? 'fighterActive' : ''}
-      aria-pressed={fighter === 'opponent'}
-      onClick={() => setFighter('opponent')}
-    >
-      Opponent
-    </button>
-  </div>
-</div>
-<div className="tagForm"><label>Action<select value={label} onChange={e => setLabel(e.target.value)}>{Object.entries(ACTION_GROUPS).map(([group, actions]) => <optgroup key={group} label={group}>{actions.map(action => <option key={action} value={action}>{action}</option>)}</optgroup>)}</select></label><label>Note (optional)<input value={note} onChange={e => setNote(e.target.value)} placeholder="e.g. right hand drops after jab" onKeyDown={e => { if (e.key === 'Enter') addTag(); }}/></label>
-<button
-  className="primary"
-  disabled={!videoUrl}
-  onClick={() => addTag()}
->
-  + Save timestamp
-</button></div>
-        </section>
-        <aside className="panel">
-<section className="statsDashboard">
-  <h2>📊 Performance Analytics</h2>
-  <p className="hint">
-    Statistics based on your annotated footage.
-  </p>
-
-  <div className="statsFighterToggle">
-    <button
-      type="button"
-      className={statsFighter === 'you' ? 'activeYou' : ''}
-      onClick={() => setStatsFighter('you')}
-    >
-      You
-    </button>
-
-    <button
-      type="button"
-      className={
-        statsFighter === 'opponent' ? 'activeOpponent' : ''
-      }
-      onClick={() => setStatsFighter('opponent')}
-    >
-      Opponent
-    </button>
-  </div>
-
-  <div className="statsCards">
-    <div className="statCard">
-      <span>Punches tagged</span>
-      <strong>{stats.totalPunches}</strong>
-    </div>
-
-    <div className="statCard">
-      <span>Defensive actions</span>
-      <strong>{stats.totalDefense}</strong>
-    </div>
-
-    <div className="statCard">
-      <span>Confirmed combos</span>
-      <strong>{stats.confirmedCombos}</strong>
-    </div>
-
-    <div className="statCard">
-      <span>Rejected suggestions</span>
-      <strong>{stats.rejectedCombos}</strong>
-    </div>
-  </div>
-
-  <div className="statsBreakdown">
-    <h3>Punch Breakdown</h3>
-
-    {stats.punchCounts.map(item => (
-      <div className="statRow" key={item.name}>
-        <div className="statRowHeader">
-          <span>{item.name}</span>
-          <strong>{item.count}</strong>
-        </div>
-        <div className="statTrack">
-          <div
-            className="statFill punchFill"
-            style={{
-              width: `${
-                stats.totalPunches > 0
-                  ? (item.count / stats.totalPunches) * 100
-                  : 0
-              }%`
-            }}
-          />
-        </div>
-      </div>
-    ))}
-
-    <p className="statsFootnote">
-      Feints tagged: {stats.feintCount}
-    </p>
-  </div>
-
-  <div className="statsBreakdown">
-    <h3>Defensive Breakdown</h3>
-
-    {stats.defenseCounts.map(item => (
-      <div className="statRow" key={item.name}>
-        <div className="statRowHeader">
-          <span>{item.name}</span>
-          <strong>{item.count}</strong>
-        </div>
-        <div className="statTrack">
-          <div
-            className="statFill defenseFill"
-            style={{
-              width: `${
-                stats.totalDefense > 0
-                  ? (item.count / stats.totalDefense) * 100
-                  : 0
-              }%`
-            }}
-          />
-        </div>
-      </div>
-    ))}
-  </div>
-
-  <div className="statsBreakdown">
-    <h3>Most Frequent Confirmed Combos</h3>
-
-    {stats.comboFrequencies.length === 0 ? (
-      <p className="hint">
-        Confirm some combinations to see patterns here.
-      </p>
-    ) : (
-      stats.comboFrequencies.map(([name, count]) => (
-        <div className="comboStat" key={name}>
-          <span>{name}</span>
-          <strong>{count}×</strong>
-        </div>
-      ))
-    )}
-
-    <p className="statsFootnote">
-      {stats.pendingCombos} combinations awaiting review
-    </p>
-  </div>
-</section>
-<div className="panelTitle"><h2>Tagged moments</h2><strong className="count">{tags.length}</strong></div><p className="hint">Click a timestamp to jump to that moment in your video.</p>
-          {tags.length === 0 ? <div className="empty">Your event timeline starts here.<br/>Play a video and add your first tag.</div> : <div className="events">{tags.map(tag => <div className="event" key={tag.id}><button className="timestamp" onClick={() => seek(tag.time)}>{stamp(tag.time)} ▶</button><div className="eventText">
-<strong>
-  {tag.fighter === 'you'
-    ? 'You'
-    : tag.fighter === 'opponent'
-      ? 'Opponent'
-      : 'Unassigned'}
-  {' • '}
-  {tag.label}
-</strong>
-{tag.note && <p>{tag.note}</p>}</div><button className="delete" title="Delete tag" aria-label={`Delete ${tag.label} at ${stamp(tag.time)}`} onClick={() => save(tags.filter(x => x.id !== tag.id))}>×</button></div>)}</div>}
-          
-
-<div className="combinationSection">
-  <h3>🥊 Potential Combinations</h3>
-
-  {combinations.length === 0 ? (
-    <p className="hint">
-      Tag consecutive punches to discover combinations.
-    </p>
-  ) : (
-    <div className="combinationList">
-      {combinations.map(combo => {
-        const review = resolveReview(combo, reviews);
-        const status = review.state === 'confirmed' || review.state === 'rejected' ? review.state : undefined;
-
-        return (
-          <div
-            key={combo.id}
-            className="combinationCard"
-          >
-            <div className="comboHeader">
-              <span className="comboFighter">
-                {combo.fighter === 'you'
-                  ? 'You'
-                  : 'Opponent'}
-              </span>
-
-              <span className={`reviewBadge ${review.state}`}>
-                {review.state === 'confirmed'
-                  ? '✓ Confirmed'
-                  : review.state === 'rejected'
-                    ? '✕ Rejected'
-                    : review.state === 'changed'
-                      ? '⟳ Tags changed'
-                      : 'Needs review'}
-              </span>
+          <div className="fighterSelector">
+            <span className="fighterLabel">Who performed the action?</span>
+            <div className="fighterButtons">
+              <button type="button" className={fighter === 'you' ? 'fighterActive' : ''} aria-pressed={fighter === 'you'} onClick={() => setFighter('you')}>You</button>
+              <button type="button" className={fighter === 'opponent' ? 'fighterActive' : ''} aria-pressed={fighter === 'opponent'} onClick={() => setFighter('opponent')}>Opponent</button>
             </div>
-
-            <strong>
-              {combo.punches.join(' → ')}
-            </strong>
-
-            {review.state === 'changed' && (
-              <p className="comboChanged">
-                {review.previous === 'mixed'
-                  ? 'Punches changed since you reviewed this. Please re-review.'
-                  : `Previously ${review.previous}, but the punches changed. Please re-review.`}
-              </p>
-            )}
-
-            <button
-              type="button"
-              className="comboTime"
-              onClick={() => seek(combo.start)}
-            >
-              ▶ Review at {stamp(combo.start)}
-            </button>
-
-            <div className="reviewButtons">
-              <button
-                type="button"
-                className="confirmButton"
-                aria-pressed={status === 'confirmed'}
-                onClick={() =>
-                  reviewCombination(combo, 'confirmed')
-                }
-              >
-                ✓ Confirm
-              </button>
-
-              <button
-                type="button"
-                className="rejectButton"
-                aria-pressed={status === 'rejected'}
-                onClick={() =>
-                  reviewCombination(combo, 'rejected')
-                }
-              >
-                ✕ Reject
-              </button>
-            </div>
-
-            {review.state !== 'pending' && (
-              <button
-                type="button"
-                className="undoReview"
-                onClick={() =>
-                  reviewCombination(combo, null)
-                }
-              >
-                {review.state === 'changed' ? 'Clear old decision' : 'Undo decision'}
-              </button>
-            )}
           </div>
-        );
-      })}
-    </div>
-  )}
-</div>
-<button className="export" disabled={!tags.length} onClick={exportTags}>↓ Export tags as JSON</button><p className="privacy">Videos stay on your device. Tags are saved in this browser, and can be exported. Re-select the same file to restore its tags.</p>
+          <div className="tagForm">
+            <label>Action<select value={label} onChange={e => setLabel(e.target.value)}>{Object.entries(ACTION_GROUPS).map(([group, actions]) => <optgroup key={group} label={group}>{actions.map(action => <option key={action} value={action}>{action}</option>)}</optgroup>)}</select></label>
+            <label>Note (optional)<input value={note} onChange={e => setNote(e.target.value)} placeholder="e.g. right hand drops after jab" onKeyDown={e => { if (e.key === 'Enter') addTag(); }} /></label>
+            <button className="primary" disabled={!videoUrl} onClick={() => addTag()}>+ Save timestamp</button>
+          </div>
+        </section>
+
+        <aside className="panel">
+          <StatsPanel stats={stats} fighter={statsFighter} scopeLabel={scopeLabel} onFighterChange={setStatsFighter} />
+
+          <div className="panelTitle"><h2>Tagged moments</h2><strong className="count">{visibleTags.length}</strong></div>
+          <p className="hint">Click a timestamp to jump there. ✎ edits a tag. {selectedRound !== null && <>Showing <strong className="scope">{scopeLabel}</strong> only.</>}</p>
+          <TagList tags={visibleTags} roundOf={t => roundAt(rounds, t)} getCurrentTime={now}
+            onSeek={seek} onUpdate={updateTag} onDelete={deleteTag} />
+
+          <CombinationList combinations={visibleCombos} reviews={reviews} onSeek={seek} onReview={reviewCombination} />
+
+          <div className="dataButtons">
+            <button className="export" disabled={!tags.length && !rounds.length} onClick={exportData}>↓ Export JSON</button>
+            <label className={`export fileButton${videoUrl ? '' : ' disabled'}`}>
+              ↑ Import JSON
+              <input type="file" accept="application/json,.json" disabled={!videoUrl}
+                onChange={e => { void importData(e.target.files?.[0]); e.target.value = ''; }} />
+            </label>
+          </div>
+          <p className="privacy">Videos stay on your device. Tags, rounds, and combo decisions are saved in this browser. Export JSON as a backup; import merges into the loaded video without deleting anything.</p>
         </aside>
       </div>
-    </main><footer>FightSmart • No AI claims yet, just useful film study.</footer>
+    </main>
+    <footer>FightSmart • No AI claims yet, just useful film study.</footer>
   </div>;
 }

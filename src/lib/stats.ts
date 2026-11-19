@@ -1,8 +1,18 @@
-import { DEFENSE_ACTIONS, PUNCH_ACTIONS } from './actions';
+import { DEFENSE_ACTIONS, PUNCHES, PUNCH_ACTIONS } from './actions';
 import { resolveReview } from './combinations';
 import type { Combination, Fighter, Reviews, Tag } from './types';
 
 export type Count = { name: string; count: number };
+
+export type OutcomeStats = {
+  landed: number;
+  blocked: number;
+  missed: number;
+  /** Punches with any outcome recorded. Accuracy is only computed over these. */
+  known: number;
+  /** landed / known, or null when no outcomes are recorded. */
+  accuracy: number | null;
+};
 
 export type FighterStats = {
   punchCounts: Count[];
@@ -10,6 +20,7 @@ export type FighterStats = {
   totalPunches: number;
   totalDefense: number;
   feintCount: number;
+  outcomes: OutcomeStats;
   confirmedCombos: number;
   rejectedCombos: number;
   /** Combinations with no decision, or whose decision is out of date because their tags changed. */
@@ -20,6 +31,14 @@ export type FighterStats = {
 
 export function countActions(events: Tag[], actions: readonly string[]): Count[] {
   return actions.map(name => ({ name, count: events.filter(t => t.label === name).length }));
+}
+
+export function computeOutcomes(punches: Tag[]): OutcomeStats {
+  const landed = punches.filter(t => t.outcome === 'landed').length;
+  const blocked = punches.filter(t => t.outcome === 'blocked').length;
+  const missed = punches.filter(t => t.outcome === 'missed').length;
+  const known = landed + blocked + missed;
+  return { landed, blocked, missed, known, accuracy: known > 0 ? landed / known : null };
 }
 
 export function computeFighterStats(tags: Tag[], combos: Combination[], reviews: Reviews, fighter: Fighter): FighterStats {
@@ -49,6 +68,7 @@ export function computeFighterStats(tags: Tag[], combos: Combination[], reviews:
     totalPunches: punchCounts.reduce((sum, c) => sum + c.count, 0),
     totalDefense: defenseCounts.reduce((sum, c) => sum + c.count, 0),
     feintCount: fighterTags.filter(t => t.label === 'Feint').length,
+    outcomes: computeOutcomes(fighterTags.filter(t => PUNCHES.has(t.label))),
     confirmedCombos,
     rejectedCombos,
     pendingCombos,

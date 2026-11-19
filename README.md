@@ -1,51 +1,79 @@
-# CornerIQ — Session 1
+# FightSmart
 
-A minimal React + TypeScript boxing film-review app. **Not an AI analyzer yet.**
+A keyboard-driven boxing film study app for reviewing sparring footage and scouting opponents.
+Built with React + TypeScript (Vite). Runs entirely in your browser; videos never leave your computer.
 
-## Prerequisites
-- Node.js 20.19+ (or 22.12+); npm
-- VS Code (recommended)
+> **Status:** manual annotation and analytics. **No AI features yet.** Computer vision experiments are planned and will be reported with measured accuracy, not claims.
+
+## Features
+
+- **Fast tagging:** punches, defense, and mistakes for **You** (green) or **Opponent** (blue), one key per action
+- **Punch outcomes:** mark the last punch landed / blocked / missed (`Q` / `W` / `E`); accuracy is computed only over punches with a known outcome
+- **Precise review:** frame stepping, ±1s / ±5s seeking, 0.25×–2× playback, timestamps to 0.1s
+- **Rounds:** mark round start/end while watching (`N` / `⇧N`), jump between rounds, filter stats and tags per round
+- **Edit tags:** time, action, fighter, outcome, and note; undo the last tag with `Z`
+- **Combination suggestions:** punches by the same fighter within 1.5s are suggested as combos for you to confirm or reject; if the punches change after review, the combo is flagged for re-review instead of silently losing your decision
+- **Per-fighter analytics:** punch and defense breakdowns, accuracy, most frequent confirmed combos
+- **Import / export:** versioned JSON (schema v2) with tags, combo decisions, and rounds; imports also accept files from older versions and merge without deleting anything
 
 ## Run it
+
+Requires Node.js 20.19+ (or 22.12+).
+
 ```bash
 npm install
-npm run dev
+npm run dev        # start the app (http://localhost:5173)
+npm test           # unit tests (Vitest)
+npm run build      # type-check + production build
 ```
-Open the local URL shown in the terminal (usually http://localhost:5173).
 
-## First exercise
-1. Select a browser-compatible sparring video (MP4 with H.264 is a good starting point).
-2. Play it; try 0.5× speed and the 5-second rewind button.
-3. Tag a jab, a defensive action, and a mistake. Add useful notes.
-4. Click timestamps to revisit each moment.
-5. Refresh the page and reselect **the same unmodified video file** to restore annotations.
-6. Export tags as JSON.
+## Keyboard shortcuts
 
-## What is stored?
-- Video stays local in your browser; it is not uploaded.
-- Tags are saved in browser `localStorage`, keyed by filename, size and last-modified timestamp.
-- The browser cannot automatically reopen a local file after refresh; reselect the video.
-- Clearing browser storage deletes saved tags. Export JSON as a backup. Import is a later feature.
-- Browser storage is not encrypted, so don't include private details in tags on a shared computer.
+| Keys | Action |
+|---|---|
+| `1` / `2` | Tag as You / Opponent |
+| `J` `C` `H` `U` `F` | Jab, Cross, Hook, Uppercut, Feint |
+| `S` `R` `B` `K` `P` `L` `T` | Slip, Roll, Block, Catch, Parry, Pull back, Step back |
+| `M` / `O` | Mistake / Other |
+| `Q` / `W` / `E` | Last punch landed / blocked / missed |
+| `Z` | Undo last tag |
+| `Space` | Play / pause |
+| `←` `→` (with `⇧`) | Seek 5s (1s) |
+| `,` / `.` | Previous / next frame (assumes 30 fps) |
+| `[` / `]` | Slower / faster |
+| `N` / `⇧N` | Start / end round |
 
-## Simple structure
+Shortcuts are ignored while typing in a text field.
+
+## Project structure
+
 ```
 src/
-  App.tsx       # Video player, tagging, navigation, export
-  main.tsx      # React entry
-  styles.css    # Layout and theme
-index.html
-package.json
-tsconfig.json
-vite.config.ts
+  App.tsx                 # State, persistence, keyboard shortcuts, layout
+  components/             # RoundBar, TagList (+ inline editor), CombinationList, StatsPanel, ShortcutGuide
+  lib/                    # Pure, unit-tested logic (no React)
+    combinations.ts       #   combo detection + review matching
+    stats.ts              #   per-fighter statistics and accuracy
+    rounds.ts             #   round numbering, lookup, start/end
+    dataFile.ts           #   versioned import/export, validation, merge
+    storage.ts            #   localStorage layout
+    *.test.ts             #   Vitest tests
 ```
 
-## Good next tasks
-- Add a way to import previously exported JSON tags.
-- Add editable tag descriptions.
-- Add keyboard shortcuts (but not while typing in a text field).
-- Add round boundaries and stats.
-- Later: FastAPI + SQLite for persistent sessions and tagged-event queries.
+## Data and privacy
 
-## Privacy / responsible use
-Use video footage you have permission to store and analyze. Don't commit identifiable sparring video files to a public repository.
+- Videos are played from your disk with a temporary browser URL; they are never uploaded.
+- Tags are saved in browser `localStorage`, keyed by the video's filename, size, and modified time. Reselect the same unmodified file after a refresh to restore them.
+- Clearing browser data deletes saved tags. Use **Export JSON** as a backup.
+- Only analyze footage you have permission to use, and don't commit sparring videos to a public repository (`.gitignore` excludes common video formats).
+
+## Roadmap
+
+1. ~~Tested logic modules, combo review fix~~
+2. ~~Versioned import/export~~
+3. ~~Tag editing, frame stepping, precise timestamps~~
+4. ~~Rounds and punch outcomes~~
+5. Computer vision spike: pose estimation on a short clip, measured on local hardware
+6. Punch-candidate detection, evaluated against manual tags (precision / recall)
+7. FastAPI + SQLite backend for sessions across multiple videos
+8. Pattern analytics and evidence-linked scouting reports

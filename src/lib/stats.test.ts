@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { detectCombinations } from './combinations';
-import { stamp } from './format';
+import { stamp, stampPrecise } from './format';
 import { computeFighterStats } from './stats';
 import type { Fighter, Tag } from './types';
 
@@ -53,5 +53,26 @@ describe('stamp', () => {
     expect(stamp(0)).toBe('00:00');
     expect(stamp(65.9)).toBe('01:05');
     expect(stamp(600)).toBe('10:00');
+  });
+});
+
+describe('outcomes and precise stamps', () => {
+  it('computes accuracy only over punches with a known outcome', () => {
+    const tags: Tag[] = [
+      { ...tag('a', 0, 'Jab'), outcome: 'landed' },
+      { ...tag('b', 3, 'Cross'), outcome: 'missed' },
+      { ...tag('c', 6, 'Hook'), outcome: 'landed' },
+      tag('d', 9, 'Jab'),
+      { ...tag('e', 12, 'Slip'), outcome: 'landed' }, // not a punch, ignored
+    ];
+    const { outcomes } = computeFighterStats(tags, [], {}, 'you');
+    expect(outcomes).toEqual({ landed: 2, blocked: 0, missed: 1, known: 3, accuracy: 2 / 3 });
+    expect(computeFighterStats([tag('a', 0, 'Jab')], [], {}, 'you').outcomes.accuracy).toBeNull();
+  });
+
+  it('formats tenths of a second', () => {
+    expect(stampPrecise(0)).toBe('00:00.0');
+    expect(stampPrecise(65.37)).toBe('01:05.3');
+    expect(stampPrecise(0.3)).toBe('00:00.3');
   });
 });
