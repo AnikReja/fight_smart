@@ -86,7 +86,9 @@ class RTMOBackend:
         return people
 
 
-def extract(video: Path, out: Path, backend, num_poses: int = 4, start: float = 0.0, end: float | None = None) -> dict:
+def extract(video: Path, out: Path, backend, num_poses: int = 4, start: float = 0.0, end: float | None = None,
+            stride: int = 1) -> dict:
+    """stride=2 processes every second frame (60 fps video -> 30 poses per second)."""
     cap = cv2.VideoCapture(str(video))
     if not cap.isOpened():
         raise SystemExit(f"Cannot open {video}")
@@ -102,6 +104,8 @@ def extract(video: Path, out: Path, backend, num_poses: int = 4, start: float = 
         if not ok:
             break
         t = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000
+        for _ in range(stride - 1):
+            cap.grab()  # skip without decoding into an image
         if end is not None and t > end:
             break
         people = backend(frame, int(t * 1000))[:num_poses]
@@ -116,7 +120,7 @@ def extract(video: Path, out: Path, backend, num_poses: int = 4, start: float = 
     elapsed = time.perf_counter() - t0
     meta = {
         "video": video.name, "width": width, "height": height, "fps": fps, "total_frames": total,
-        "processed_frames": len(times), "start": start, "end": end, "num_poses": num_poses,
+        "processed_frames": len(times), "start": start, "end": end, "num_poses": num_poses, "stride": stride,
         "backend": backend.name, "joints": JOINTS,
         "seconds": round(elapsed, 1), "frames_per_second": round(len(times) / max(elapsed, 1e-9), 1),
     }
@@ -135,9 +139,10 @@ def main() -> None:
     parser.add_argument("--num-poses", type=int, default=4, help="max people per frame (fighters + bystanders)")
     parser.add_argument("--start", type=float, default=0.0)
     parser.add_argument("--end", type=float, default=None)
+    parser.add_argument("--stride", type=int, default=1, help="process every Nth frame (2 for 60 fps video)")
     args = parser.parse_args()
     backend = MediaPipeBackend(args.num_poses) if args.backend == "mediapipe" else RTMOBackend(args.rtmo_size, args.score_thr)
-    meta = extract(args.video, args.out, backend, args.num_poses, args.start, args.end)
+    meta = extract(args.video, args.out, backend, args.num_poses, args.start, args.end, args.stride)
     print(json.dumps(meta, indent=2))
 
 

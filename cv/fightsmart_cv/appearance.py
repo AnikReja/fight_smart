@@ -16,6 +16,7 @@ This re-reads the video with the saved skeletons, so it is fast (no neural netwo
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 import cv2
@@ -89,6 +90,7 @@ def appearance_distance(a: np.ndarray, b: np.ndarray) -> float:
 def compute(video: Path, poses: Path) -> np.ndarray:
     data = np.load(poses)
     times, landmarks = data["times"], data["landmarks"]
+    stride = int(json.loads(str(data["meta"])).get("stride", 1))
     cap = cv2.VideoCapture(str(video))
     cap.set(cv2.CAP_PROP_POS_MSEC, float(times[0]) * 1000)
     feats = np.full(landmarks.shape[:2] + (len(REGIONS), N_COLORS), np.nan, dtype=np.float32)
@@ -96,6 +98,8 @@ def compute(video: Path, poses: Path) -> np.ndarray:
         ok, frame = cap.read()
         if not ok:
             break
+        for _ in range(stride - 1):
+            cap.grab()
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         for s in range(landmarks.shape[1]):
             if not np.isnan(landmarks[f, s, J["l_hip"], 0]):

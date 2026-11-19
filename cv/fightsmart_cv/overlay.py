@@ -50,7 +50,8 @@ def main() -> None:
     preds = json.loads((args.analysis / "candidates.json").read_text(encoding="utf-8"))["predictions"]
 
     cap = cv2.VideoCapture(str(args.video))
-    fps = cap.get(cv2.CAP_PROP_FPS) or 30
+    stride = int(json.loads(str(data["meta"])).get("stride", 1))
+    fps = (cap.get(cv2.CAP_PROP_FPS) or 30) / stride
     w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     cap.set(cv2.CAP_PROP_POS_MSEC, float(times[0]) * 1000)
     writer = cv2.VideoWriter(str(args.out), cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
@@ -59,6 +60,8 @@ def main() -> None:
         ok, img = cap.read()
         if not ok:
             break
+        for _ in range(stride - 1):
+            cap.grab()
         tracked = set(assignment[f][assignment[f] >= 0])
         for s in range(landmarks.shape[1]):
             if not np.isnan(landmarks[f, s, J["l_hip"], 0]) and s not in tracked:
