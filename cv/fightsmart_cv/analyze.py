@@ -47,6 +47,7 @@ def main() -> None:
     parser.add_argument("--labels", type=Path, help="FightSmart export JSON with hand-tagged punches")
     parser.add_argument("--you", choices=NAMES, help="which track is you (see the overlay video)")
     parser.add_argument("--tolerance", type=float, default=0.4)
+    parser.add_argument("--seed-time", type=float, help="a moment (s) where the two biggest people are the fighters")
     args = parser.parse_args()
 
     data = np.load(args.poses)
@@ -58,7 +59,7 @@ def main() -> None:
     meta = json.loads(str(data["meta"]))
     cfg = DetectorConfig()
 
-    assignment = track_two(times, landmarks, appearance)
+    assignment = track_two(times, landmarks, appearance, seed_time=args.seed_time)
     people = (~np.isnan(landmarks[:, :, J["l_hip"], 0])).sum(axis=1)
     summary: dict = {
         "video": meta["video"], "backend": meta["backend"], "frames": len(times),

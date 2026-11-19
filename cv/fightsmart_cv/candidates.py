@@ -156,7 +156,10 @@ def detect(series: np.ndarray, times: np.ndarray, fighter: str, cfg: DetectorCon
             peak_speed = float(np.nanmax(window_speed)) if not np.isnan(window_speed).all() else 0.0
             if ext[i] < cfg.min_extension or rise < cfg.min_rise or peak_speed < cfg.min_speed:
                 continue
-            score = float(np.tanh(rise / cfg.min_rise - 1) * 0.5 + np.tanh(peak_speed / cfg.min_speed - 1) * 0.5) * 0.5 + 0.5
+            # Ranking score in 0-1: how far above the thresholds the rise and speed are (a threshold of 0 = ignored).
+            rise_term = np.tanh(rise / cfg.min_rise - 1) if cfg.min_rise > 0 else 0.0
+            speed_term = np.tanh(peak_speed / cfg.min_speed - 1) if cfg.min_speed > 0 else 0.0
+            score = float(rise_term * 0.5 + speed_term * 0.5) * 0.5 + 0.5
             found.append(Candidate(float(times[i]), fighter, side, round(score, 3), round(float(ext[i]), 3), round(rise, 3), round(peak_speed, 2)))
         if found:
             keep = non_max_suppression(np.array([c.time for c in found]), np.array([c.score for c in found]), cfg.min_separation)

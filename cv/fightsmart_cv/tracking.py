@@ -170,6 +170,24 @@ def seed_profiles(tracklets: list[Tracklet], landmarks: np.ndarray, min_differen
     return a.appearance, b.appearance
 
 
+def seed_profiles_at(tracklets: list[Tracklet], landmarks: np.ndarray, times: np.ndarray,
+                     seed_time: float) -> tuple[np.ndarray, np.ndarray]:
+    """User-chosen seed: at `seed_time` the two biggest people on screen are the fighters (A = left).
+
+    Use when automatic seeding picks the wrong people (e.g. a coach standing still at the ropes is on
+    screen longer than either fighter). One known moment is enough; color profiles do the rest.
+    """
+    f = int(np.argmin(np.abs(times - seed_time)))
+    for offset in range(0, 30):  # if nobody is linked exactly there, look a few frames later
+        here = [t for t in tracklets if f + offset in t.frames]
+        if len(here) >= 2:
+            g = f + offset
+            biggest = sorted(here, key=lambda t: -body_height(landmarks[g, t.slots[t.frames.index(g)]]))[:2]
+            a, b = sorted(biggest, key=lambda t: hip_center(landmarks[g, t.slots[t.frames.index(g)]])[0])
+            return a.appearance, b.appearance
+    raise ValueError(f"Fewer than two people tracked near {seed_time:.1f}s; pick a moment where both fighters are clearly visible.")
+
+
 def assign_identities(tracklets: list[Tracklet], profiles: tuple[np.ndarray, np.ndarray], config: TrackConfig,
                       heights: tuple[float, float] = (0.0, 0.0)) -> list[int]:
     """Label each tracklet 0 (A), 1 (B), or -1 (someone else) by clothing color, with a size sanity check."""
@@ -194,17 +212,27 @@ def _profile_height(members: list[Tracklet]) -> float:
 
 
 def track_two(times: np.ndarray, landmarks: np.ndarray, appearance: np.ndarray,
-              config: TrackConfig = TrackConfig()) -> np.ndarray:
-    """Returns assignment (F, 2): detection slot used for fighter A and B in each frame, or -1."""
+              config: TrackConfig = TrackConfig(), seed_time: float | None = None) -> np.ndarray:
+    """Returns assignment (F, 2): detection slot used for fighter A and B in each frame, or -1.
+
+    `seed_time`: a moment where the two biggest people on screen are the fighters (optional; otherwise
+    the fighters are guessed as the biggest, longest-visible pair of differently dressed people).
+    """
     tracklets = build_tracklets(landmarks, config, appearance)
     summarize(tracklets, landmarks, appearance)
     tracklets = [t for t in tracklets if not np.isnan(t.appearance).all()]
     if not tracklets:
         return np.full((landmarks.shape[0], 2), -1, dtype=int)
 
-    profiles = seed_profiles(tracklets, landmarks)
+    profiles = seed_profiles(tracklets, landmarks) if seed_time is None else seed_profiles_at(tracklets, landmarks, times, seed_time)
     heights = (0.0, 0.0)
-    for _ in range(config.iterations):
+    # With a user-chosen seed, keep its color profiles fixed: refining them by averaging every matched
+    # tracklet lets look-alikes who are on screen longer (coaches at the ropes) pull the profile toward them.
+    iterations = config.iterations if seed_time is None else 0
+    if seed_time is not None:
+        labels = assign_identities(tracklets, profiles, config, heights)
+        heights = tuple(_profile_height([t for t, l in zip(tracklets, labels) if l == i]) for i in (0, 1))
+    for _ in range(iterations):
         labels = assign_identities(tracklets, profiles, config, heights)
         heights = tuple(_profile_height([t for t, l in zip(tracklets, labels) if l == i]) for i in (0, 1))
         new = []
@@ -220,15 +248,25 @@ def track_two(times: np.ndarray, landmarks: np.ndarray, appearance: np.ndarray,
         profiles = (new[0], new[1])
     labels = assign_identities(tracklets, profiles, config, heights)
 
-    assignment = np.full((landmarks.shape[0], 2), -1, dtype=int)
-    best_dist = np.full((landmarks.shape[0], 2), np.inf)
+    # Candidates per frame and fighter: (color distance, slot).
+    frames = landmarks.shape[0]
+    candidates: list[list[list[tuple[float, int]]]] = [[[], []] for _ in range(frames)]
     for t, label in zip(tracklets, labels):
         if label < 0:
             continue
         d = appearance_distance(t.appearance, profiles[label])
         for f, s in zip(t.frames, t.slots):
-            if d < best_dist[f, label] and assignment[f, 1 - label] != s:
-                assignment[f, label], best_dist[f, label] = s, d
+            candidates[f][label].append((d, s))
+
+    # Best color match per fighter in each frame.
+    # (Tried and removed: preferring the candidate closest to the other fighter. On screen, a spectator
+    # standing *behind* a fighter looks close too, so it picked spectators more often than it fixed errors.)
+    assignment = np.full((frames, 2), -1, dtype=int)
+    for f in range(frames):
+        for i in (0, 1):
+            options = [(d, s) for d, s in sorted(candidates[f][i]) if s != assignment[f, 1 - i]]
+            if options:
+                assignment[f, i] = options[0][1]
     return assignment
 
 

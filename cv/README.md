@@ -38,9 +38,9 @@ RTMO downloads itself on first run (~36 MB) into `~/.cache/rtmlib`.
 
 ```bash
 cd cv
-.venv/Scripts/python -m fightsmart_cv.pose VIDEO.mp4 --backend rtmo --out output/round3.npz
+.venv/Scripts/python -m fightsmart_cv.pose VIDEO.mp4 --backend rtmo --out output/round3.npz   # add --stride 2 for 60 fps video
 .venv/Scripts/python -m fightsmart_cv.appearance VIDEO.mp4 output/round3.npz
-.venv/Scripts/python -m fightsmart_cv.analyze output/round3.npz --out output/round3
+.venv/Scripts/python -m fightsmart_cv.analyze output/round3.npz --out output/round3   # --seed-time 155 if it picks the wrong people
 .venv/Scripts/python -m fightsmart_cv.overlay VIDEO.mp4 output/round3.npz output/round3 --out output/round3/overlay.mp4
 # or everything for every clip in a folder:
 .venv/Scripts/python -m fightsmart_cv.batch output/pro
@@ -136,20 +136,65 @@ Tracking *who is where* works (Experiment 2); *what their hands did* does not.
 Caveats: small label set (35, only 10 for A); a single annotator; untagged real punches may count as false
 positives; one camera and one round.
 
-What could change the answer (untested):
-1. **Better footage:** a phone on a tripod at chest height, closer, 1080p at 60 fps, so wrists are larger and less blurred.
-2. **Bigger or top-down pose model:** RTMO-m, or crop each tracked fighter, upscale, and run a single-person
-   model (RTMPose) for sharper wrists.
-3. **A learned classifier on pose sequences:** only worth trying once signals separate better than AUC ≈ 0.6
-   and there are hundreds of labels.
+### Experiment 4: does better footage change the answer?
+
+**Footage:** a publicly posted amateur sparring video (kept local, not redistributed): 1080p at 60 fps, handheld at
+chest height a few meters from the fighters, with camera moves, cuts between rounds, and a crowd (6 people
+detected in 98% of frames). Fighters fill roughly 3× more of the frame than on the gym camera.
+Processed 2:00–4:00 at every 2nd frame (30 poses/s). Labels: 35 punch tags between 2:33 and 3:31; 4 were exact
+duplicates (tagged while paused), so scores use the 31 unique tags.
+
+**Tracking needed a one-time seed.** Automatic seeding picked a coach standing still at the ropes as a fighter.
+New option `--seed-time`: one moment where the two biggest people are the fighters. Spot check, 12 moments:
+
+| Tracker setting | Correct | Wrong | Missing |
+|---|---|---|---|
+| Automatic seed | 8 / 24 | 16 | 0 |
+| Seed at 2:35, profiles refined by averaging | 17 / 24 | 7 | 0 |
+| **Seed at 2:35, profiles frozen** | **20 / 24** | **3** | **1** |
+| + "prefer whoever is near the other fighter" | made it worse (spectators *behind* a fighter look close in 2D); removed | | |
+
+The fighter in all-black kit is the hard one: black-shirted coaches match the same color profile.
+
+**Signal quality (ROC AUC, tagged punches vs. 300 random other moments):**
+
+| Signal | Gym A / B | **YouTube A / B** |
+|---|---|---|
+| Max arm extension | 0.64 / 0.50 | 0.57 / 0.55 |
+| Extension rise | 0.47 / 0.60 | 0.59 / 0.76 |
+| Max wrist speed | 0.45 / 0.56 | **0.71 / 0.84** |
+
+**Detection, tuned on the first half and scored once on the held-out second half** (search range widened after
+the first run picked a value at its edge):
+
+| | Gym held-out | **YouTube held-out** |
+|---|---|---|
+| Labels in held-out half | 17 | 16 |
+| Chosen rule | speed ≥ 2, extension ≥ 0.75 | **wrist speed ≥ 6 torso/s only** (extension, rise off) |
+| Precision | 7% | 21% |
+| Recall | 12% | 44% |
+| F1 | 0.09 | **0.28** |
+| F1 on the tune half (for comparison) | 0.39 | 0.58 |
+
+**Conclusion:** better footage roughly triples held-out F1 and turns wrist speed into a real signal (AUC up to
+0.84), and the tuner independently picks that same signal. It is still not useful as an assistant: about 4 of 5
+suggestions are wrong, mostly for the all-black fighter (tracking mix-ups with coaches, plus guard movement).
+With 16 held-out labels the uncertainty is large (7 of 16 found → roughly 20–67% recall at 95% confidence).
+
+What could still move it (untested):
+1. **More labels + a learned classifier** on short pose sequences (speeds, accelerations, elbow angle, both arms,
+   distance to the opponent). Wrist speed alone gets AUC 0.7–0.8; combining weak signals is what classifiers
+   are for, but it needs a few hundred tagged punches and evaluation on unseen rounds.
+2. **Better identity** for look-alike clothing: a learned person re-identification model instead of color histograms.
+3. **Bigger or top-down pose model** (RTMO-m, or crop + RTMPose) for sharper wrists.
 
 ### Speed on this laptop (CPU only)
 
-| Step | Time for the 4.5-minute round |
-|---|---|
-| RTMO-s pose | 4.4–5.0 frames/s → about 28 min |
-| Clothing colors | 54 s |
-| Tracking + candidates | ~20 s |
+| Step | Gym clip (848×438, 4.5 min) | YouTube clip (1080p60, 2 min at stride 2) |
+|---|---|---|
+| RTMO-s pose | 4.4–5.0 frames/s → ~28 min | 1.2–2.0 frames/s (1080p decoding) → ~35 min |
+| Clothing colors | 54 s | 1 min 49 s |
+| Tracking + candidates | ~20 s | ~20 s |
 
 ## Glossary (interview notes)
 

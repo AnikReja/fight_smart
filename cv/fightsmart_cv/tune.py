@@ -25,9 +25,9 @@ from .evaluate import Event, labels_from_export, score
 from .tracking import fighter_series
 
 GRID = {
-    "min_extension": [0.3, 0.4, 0.5, 0.6, 0.75],
-    "min_rise": [0.15, 0.2, 0.3, 0.4],
-    "min_speed": [2.0, 3.0, 4.0, 6.0],
+    "min_extension": [0.0, 0.3, 0.45, 0.6, 0.75],
+    "min_rise": [0.0, 0.15, 0.3, 0.4],
+    "min_speed": [2.0, 4.0, 6.0, 8.0, 10.0, 13.0],
     "rise_window": [0.25, 0.35, 0.5],
     "min_separation": [0.25, 0.5, 0.8],
 }
