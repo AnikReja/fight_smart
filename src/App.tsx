@@ -1,94 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-
-
-type Fighter = 'you' | 'opponent';
-
-type Tag = {
-  id: string;
-  time: number;
-  label: string;
-  note: string;
-  fighter?: Fighter;
-};
-
-const ACTION_GROUPS = {
-  Punches: ['Jab', 'Cross', 'Hook', 'Uppercut', 'Feint'],
-  Defense: ['Slip', 'Roll', 'Block', 'Catch', 'Parry', 'Pull back', 'Step back'],
-  Other: ['Mistake', 'Other'],
-};
-const stamp = (s: number) => `${Math.floor(s / 60).toString().padStart(2, '0')}:${Math.floor(s % 60).toString().padStart(2, '0')}`;
-
-const ACTION_SHORTCUTS: Record<string, string> = {
-  j: "Jab",
-  c: "Cross",
-  h: "Hook",
-  u: "Uppercut",
-  f: "Feint",
-  s: "Slip",
-  r: "Roll",
-  b: "Block",
-  k: "Catch",
-  p: "Parry",
-  m: "Mistake",
-};
-
-const PUNCHES = new Set([
-  'Jab', 'Cross', 'Hook', 'Uppercut'
-]);
-
-
-type ReviewStatus = 'confirmed' | 'rejected';
-
-type Combination = {
-  id: string;
-  fighter: 'you' | 'opponent';
-  punches: string[];
-  start: number;
-  end: number;
-};
-
-function detectCombinations(tags: Tag[]): Combination[] {
-  const results: Combination[] = [];
-  const MAX_GAP = 1.5;
-
-  for (const fighter of ['you', 'opponent'] as const) {
-    const events = tags
-      .filter(t =>
-        t.fighter === fighter && PUNCHES.has(t.label)
-      )
-      .sort((a, b) => a.time - b.time);
-
-    let sequence: Tag[] = [];
-
-    function finishSequence() {
-      if (sequence.length < 2) return;
-
-      results.push({
-        id: `${fighter}:${sequence.map(t => t.id).join(':')}`,
-        fighter,
-        punches: sequence.map(t => t.label),
-        start: sequence[0].time,
-        end: sequence[sequence.length - 1].time
-      });
-    }
-
-    for (const event of events) {
-      const previous = sequence[sequence.length - 1];
-
-      if (previous && event.time - previous.time > MAX_GAP) {
-        finishSequence();
-        sequence = [];
-      }
-
-      sequence.push(event);
-    }
-
-    finishSequence();
-  }
-
-  return results.sort((a, b) => a.start - b.start);
-}
-
+import { ACTION_GROUPS, ACTION_SHORTCUTS } from './lib/actions';
+import { applyReview, detectCombinations, resolveReview } from './lib/combinations';
+import { stamp } from './lib/format';
+import { computeFighterStats } from './lib/stats';
+import type { Combination, Fighter, ReviewStatus, Reviews, Tag } from './lib/types';
 
 export default function App() {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -96,9 +11,7 @@ export default function App() {
   const [fileName, setFileName] = useState('');
   const [storageKey, setStorageKey] = useState('');
   const [tags, setTags] = useState<Tag[]>([]);
-  const [reviews, setReviews] = useState<
-    Record<string, ReviewStatus>
-  >({});
+  const [reviews, setReviews] = useState<Reviews>({});
   const [label, setLabel] = useState('Jab');
   const [fighter, setFighter] = useState<Fighter>('you');
   const [note, setNote] = useState('');
@@ -107,77 +20,8 @@ export default function App() {
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);  
   const combinations = detectCombinations(tags);
 
-const [statsFighter, setStatsFighter] =
-  useState<'you' | 'opponent'>('you');
-
-const DEFENSE_MOVES = [
-  'Slip', 'Roll', 'Block', 'Catch',
-  'Parry', 'Pull back', 'Step back'
-];
-
-function countActions(
-  events: Tag[],
-  actions: string[]
-) {
-  return actions.map(name => ({
-    name,
-    count: events.filter(t => t.label === name).length
-  }));
-}
-
-const fighterTags = tags.filter(
-  t => t.fighter === statsFighter
-);
-
-const punchCounts = countActions(
-  fighterTags,
-  ['Jab', 'Cross', 'Hook', 'Uppercut']
-);
-
-const defenseCounts = countActions(
-  fighterTags,
-  DEFENSE_MOVES
-);
-
-const totalPunches = punchCounts.reduce(
-  (sum, item) => sum + item.count, 0
-);
-
-const totalDefense = defenseCounts.reduce(
-  (sum, item) => sum + item.count, 0
-);
-
-const feintCount = fighterTags.filter(
-  t => t.label === 'Feint'
-).length;
-
-const fighterCombinations = combinations.filter(
-  c => c.fighter === statsFighter
-);
-
-const confirmedCombinations = fighterCombinations.filter(
-  c => reviews[c.id] === 'confirmed'
-);
-
-const rejectedCombinations = fighterCombinations.filter(
-  c => reviews[c.id] === 'rejected'
-);
-
-const combinationFrequencies = Object.entries(
-  confirmedCombinations.reduce<Record<string, number>>(
-    (counts, combo) => {
-      const name = combo.punches.join(' → ');
-      counts[name] = (counts[name] || 0) + 1;
-      return counts;
-    },
-    {}
-  )
-).sort((a, b) => b[1] - a[1]);
-
-const pendingCombinations = fighterCombinations.filter(
-  c => !reviews[c.id]
-).length;
-
+  const [statsFighter, setStatsFighter] = useState<Fighter>('you');
+  const stats = computeFighterStats(tags, combinations, reviews, statsFighter);
 
   useEffect(() => () => { if (videoUrl) URL.revokeObjectURL(videoUrl); }, [videoUrl]);
   useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
@@ -191,6 +35,7 @@ const pendingCombinations = fighterCombinations.filter(
   function loadVideo(file?: File) {
     if (!file) return;
     if (file.type && !file.type.startsWith('video/')) { alert('Please select a video file.'); return; }
+    // Keep the old `corneriq:` prefix so tags saved before the FightSmart rename still load.
     const key = `corneriq:tags:${file.name}:${file.size}:${file.lastModified}`;
     setStorageKey(key);
     setFileName(file.name);
@@ -347,32 +192,15 @@ if (event.key === 'ArrowRight') {
     if (videoRef.current) videoRef.current.playbackRate = next;
   }
 
-function reviewCombination(
-  id: string,
-  decision: ReviewStatus | null
-) {
+function reviewCombination(combo: Combination, decision: ReviewStatus | null) {
   if (!storageKey) return;
-
-  setReviews(previous => {
-    const updated = { ...previous };
-
-    if (decision === null) {
-      delete updated[id];
-    } else {
-      updated[id] = decision;
-    }
-
-    try {
-      localStorage.setItem(
-        `${storageKey}:reviews`,
-        JSON.stringify(updated)
-      );
-    } catch {
-      alert('Could not save combination review.');
-    }
-
-    return updated;
-  });
+  const updated = applyReview(reviews, combo, decision);
+  setReviews(updated);
+  try {
+    localStorage.setItem(`${storageKey}:reviews`, JSON.stringify(updated));
+  } catch {
+    alert('Could not save combination review.');
+  }
 }
 
   function exportTags() {
@@ -387,7 +215,7 @@ function reviewCombination(
 
   return <div className="shell">
     <div className="toast" role="status" aria-live="polite" aria-atomic="true" data-visible={Boolean(toast)}>{toast ? `✓ ${toast}` : ""}</div>
-    <header><div className="brand">◈ CORNER<span>IQ</span></div><div className="subtle">Boxing film study • Session 01</div></header>
+    <header><div className="brand">FIGHT<span>SMART</span></div><div className="subtle">Boxing film study • Session 01</div></header>
     <main>
       <section className="intro"><p className="eyebrow">YOUR FILM. YOUR INSIGHTS.</p><h1>Study the moments that matter.</h1><p>Load a sparring video, review it at your pace, and mark anything worth revisiting.</p></section>
       <div className="columns">
@@ -513,29 +341,29 @@ function reviewCombination(
   <div className="statsCards">
     <div className="statCard">
       <span>Punches tagged</span>
-      <strong>{totalPunches}</strong>
+      <strong>{stats.totalPunches}</strong>
     </div>
 
     <div className="statCard">
       <span>Defensive actions</span>
-      <strong>{totalDefense}</strong>
+      <strong>{stats.totalDefense}</strong>
     </div>
 
     <div className="statCard">
       <span>Confirmed combos</span>
-      <strong>{confirmedCombinations.length}</strong>
+      <strong>{stats.confirmedCombos}</strong>
     </div>
 
     <div className="statCard">
       <span>Rejected suggestions</span>
-      <strong>{rejectedCombinations.length}</strong>
+      <strong>{stats.rejectedCombos}</strong>
     </div>
   </div>
 
   <div className="statsBreakdown">
     <h3>Punch Breakdown</h3>
 
-    {punchCounts.map(item => (
+    {stats.punchCounts.map(item => (
       <div className="statRow" key={item.name}>
         <div className="statRowHeader">
           <span>{item.name}</span>
@@ -546,8 +374,8 @@ function reviewCombination(
             className="statFill punchFill"
             style={{
               width: `${
-                totalPunches > 0
-                  ? (item.count / totalPunches) * 100
+                stats.totalPunches > 0
+                  ? (item.count / stats.totalPunches) * 100
                   : 0
               }%`
             }}
@@ -557,14 +385,14 @@ function reviewCombination(
     ))}
 
     <p className="statsFootnote">
-      Feints tagged: {feintCount}
+      Feints tagged: {stats.feintCount}
     </p>
   </div>
 
   <div className="statsBreakdown">
     <h3>Defensive Breakdown</h3>
 
-    {defenseCounts.map(item => (
+    {stats.defenseCounts.map(item => (
       <div className="statRow" key={item.name}>
         <div className="statRowHeader">
           <span>{item.name}</span>
@@ -575,8 +403,8 @@ function reviewCombination(
             className="statFill defenseFill"
             style={{
               width: `${
-                totalDefense > 0
-                  ? (item.count / totalDefense) * 100
+                stats.totalDefense > 0
+                  ? (item.count / stats.totalDefense) * 100
                   : 0
               }%`
             }}
@@ -589,12 +417,12 @@ function reviewCombination(
   <div className="statsBreakdown">
     <h3>Most Frequent Confirmed Combos</h3>
 
-    {combinationFrequencies.length === 0 ? (
+    {stats.comboFrequencies.length === 0 ? (
       <p className="hint">
         Confirm some combinations to see patterns here.
       </p>
     ) : (
-      combinationFrequencies.map(([name, count]) => (
+      stats.comboFrequencies.map(([name, count]) => (
         <div className="comboStat" key={name}>
           <span>{name}</span>
           <strong>{count}×</strong>
@@ -603,7 +431,7 @@ function reviewCombination(
     )}
 
     <p className="statsFootnote">
-      {pendingCombinations} combinations awaiting review
+      {stats.pendingCombos} combinations awaiting review
     </p>
   </div>
 </section>
@@ -631,7 +459,8 @@ function reviewCombination(
   ) : (
     <div className="combinationList">
       {combinations.map(combo => {
-        const status = reviews[combo.id];
+        const review = resolveReview(combo, reviews);
+        const status = review.state === 'confirmed' || review.state === 'rejected' ? review.state : undefined;
 
         return (
           <div
@@ -645,18 +474,28 @@ function reviewCombination(
                   : 'Opponent'}
               </span>
 
-              <span className={`reviewBadge ${status || 'pending'}`}>
-                {status === 'confirmed'
+              <span className={`reviewBadge ${review.state}`}>
+                {review.state === 'confirmed'
                   ? '✓ Confirmed'
-                  : status === 'rejected'
+                  : review.state === 'rejected'
                     ? '✕ Rejected'
-                    : 'Needs review'}
+                    : review.state === 'changed'
+                      ? '⟳ Tags changed'
+                      : 'Needs review'}
               </span>
             </div>
 
             <strong>
               {combo.punches.join(' → ')}
             </strong>
+
+            {review.state === 'changed' && (
+              <p className="comboChanged">
+                {review.previous === 'mixed'
+                  ? 'Punches changed since you reviewed this. Please re-review.'
+                  : `Previously ${review.previous}, but the punches changed. Please re-review.`}
+              </p>
+            )}
 
             <button
               type="button"
@@ -672,7 +511,7 @@ function reviewCombination(
                 className="confirmButton"
                 aria-pressed={status === 'confirmed'}
                 onClick={() =>
-                  reviewCombination(combo.id, 'confirmed')
+                  reviewCombination(combo, 'confirmed')
                 }
               >
                 ✓ Confirm
@@ -683,22 +522,22 @@ function reviewCombination(
                 className="rejectButton"
                 aria-pressed={status === 'rejected'}
                 onClick={() =>
-                  reviewCombination(combo.id, 'rejected')
+                  reviewCombination(combo, 'rejected')
                 }
               >
                 ✕ Reject
               </button>
             </div>
 
-            {status && (
+            {review.state !== 'pending' && (
               <button
                 type="button"
                 className="undoReview"
                 onClick={() =>
-                  reviewCombination(combo.id, null)
+                  reviewCombination(combo, null)
                 }
               >
-                Undo decision
+                {review.state === 'changed' ? 'Clear old decision' : 'Undo decision'}
               </button>
             )}
           </div>
@@ -710,6 +549,6 @@ function reviewCombination(
 <button className="export" disabled={!tags.length} onClick={exportTags}>↓ Export tags as JSON</button><p className="privacy">Videos stay on your device. Tags are saved in this browser, and can be exported. Re-select the same file to restore its tags.</p>
         </aside>
       </div>
-    </main><footer>CornerIQ • First iteration • No AI claims, just useful film study.</footer>
+    </main><footer>FightSmart • No AI claims yet, just useful film study.</footer>
   </div>;
 }

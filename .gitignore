@@ -5,3 +5,4 @@ dist/
 *.mov
 *.webm
 .DS_Store
+tsconfig.tsbuildinfo
