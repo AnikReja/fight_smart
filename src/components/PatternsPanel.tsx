@@ -9,6 +9,8 @@ type Props = {
   scopeLabel: string;
   onFighterChange: (fighter: Fighter) => void;
   onSeek: (time: number) => void;
+  /** Downloads a printable report of this fighter's patterns for the current scope. */
+  onReport: () => void;
 };
 
 /** Jump a moment early so the lead-up to the action is visible. */
@@ -56,7 +58,7 @@ function DistributionCard({ title, d, onSeek }: { title: string; d: Distribution
   );
 }
 
-export function PatternsPanel({ tags, fighter, scopeLabel, onFighterChange, onSeek }: Props) {
+export function PatternsPanel({ tags, fighter, scopeLabel, onFighterChange, onSeek, onReport }: Props) {
   const them = fighter === 'you' ? 'you' : 'they';
   const otherSide = fighter === 'you' ? 'Opponent' : 'You';
   const findings = insights(tags, fighter);
@@ -72,6 +74,12 @@ export function PatternsPanel({ tags, fighter, scopeLabel, onFighterChange, onSe
         <button type="button" className={fighter === 'you' ? 'activeYou' : ''} onClick={() => onFighterChange('you')}>You</button>
         <button type="button" className={fighter === 'opponent' ? 'activeOpponent' : ''} onClick={() => onFighterChange('opponent')}>Opponent</button>
       </div>
+      {hasData && (
+        <button type="button" className="ghostButton reportButton" onClick={onReport}
+          title="Download a one-page HTML report (prints to PDF) to share with a coach">
+          {fighter === 'opponent' ? 'Download scouting report' : 'Download self-review'}
+        </button>
+      )}
 
       {!hasData ? (
         <div className="empty">No tagged actions for this fighter yet.<br />Tag a few exchanges to see patterns.</div>

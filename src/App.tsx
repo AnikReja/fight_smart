@@ -13,6 +13,7 @@ import { api } from './lib/api';
 import type { VideoSummary } from './lib/api';
 import { applyReview, detectCombinations, resolveReview } from './lib/combinations';
 import { buildExport, mergeData, parseImport } from './lib/dataFile';
+import { buildReport, reportFileName } from './lib/report';
 import type { VideoData } from './lib/dataFile';
 import { stampPrecise } from './lib/format';
 import { endRound, inRound, numberRounds, roundAt, startRound } from './lib/rounds';
@@ -289,14 +290,27 @@ export default function App() {
 
   // ---- Import / export ---------------------------------------------------
 
-  function exportData() {
-    const data = JSON.stringify(buildExport(fileName, { tags, reviews, rounds }), null, 2);
-    const url = URL.createObjectURL(new Blob([data], { type: 'application/json' }));
+  function downloadFile(contents: string, type: string, name: string) {
+    const url = URL.createObjectURL(new Blob([contents], { type }));
     const link = document.createElement('a');
     link.href = url;
-    link.download = `${fileName.replace(/\.[^/.]+$/, '') || 'sparring'}-fightsmart.json`;
+    link.download = name;
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function downloadReport() {
+    const html = buildReport({
+      videoName: fileName, fighter: patternFighter, scopeLabel, tags: visibleTags, combos: visibleCombos,
+      reviews, rounds, generatedAt: new Date(),
+    });
+    downloadFile(html, 'text/html', reportFileName(fileName, patternFighter));
+    notify('Report downloaded: open it and use Print to save a PDF');
+  }
+
+  function exportData() {
+    const data = JSON.stringify(buildExport(fileName, { tags, reviews, rounds }), null, 2);
+    downloadFile(data, 'application/json', `${fileName.replace(/\.[^/.]+$/, '') || 'sparring'}-fightsmart.json`);
   }
 
   async function importData(file?: File) {
@@ -480,7 +494,7 @@ export default function App() {
             )}
             {sideTab === 'patterns' && (
               <PatternsPanel tags={visibleTags} fighter={patternFighter} scopeLabel={scopeLabel}
-                onFighterChange={setPatternFighter} onSeek={seek} />
+                onFighterChange={setPatternFighter} onSeek={seek} onReport={downloadReport} />
             )}
             {sideTab === 'stats' && (
               <StatsPanel stats={stats} fighter={statsFighter} scopeLabel={scopeLabel} onFighterChange={setStatsFighter} />
