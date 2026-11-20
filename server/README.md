@@ -56,15 +56,20 @@ videos   (id, session_id → sessions ON DELETE SET NULL, file_name, size, last_
 ## How the app syncs
 
 1. Opening a video: register it, fetch its data, and **reconcile** with the browser's copy
-   (`src/lib/sync.ts`): one side empty → use the other; both have data → merge without deleting, the browser
+   (`src/lib/sync.ts`): drop anything this browser deleted; then one side empty → use the other; both have data → merge without deleting, the browser
    wins on the same id; upload only if the result differs.
 2. Every edit: saved to browser storage immediately, and to the server **debounced** 0.7 s after the last change
    (a burst of tags becomes one request).
 3. Server down: the top bar shows "Sync error" or "Browser only"; nothing is lost because browser storage is
    always written first. Reopening the video later merges the missed edits back.
 
-Known limit: a tag deleted while the server was off comes back from the server's copy on the next open (the
-safe direction; delete it again).
+Deletions: a merge on its own can't tell "deleted in this browser" from "added somewhere else", so the browser keeps a
+small record of deleted tag, round, and combo-decision ids (`{key}:deleted` in browser storage). Reconcile drops
+those from the server's copy before merging, and the record is cleared once a save to the server succeeds. So a tag
+deleted while the server was off stays deleted.
+
+Remaining limit: the record lives in one browser. If a second browser still holds a copy of a deleted tag, opening
+the video there merges it back.
 
 ## Tests
 

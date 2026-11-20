@@ -19,8 +19,9 @@ import { stampPrecise } from './lib/format';
 import { endRound, inRound, numberRounds, roundAt, startRound } from './lib/rounds';
 import type { NumberedRound } from './lib/rounds';
 import { computeFighterStats } from './lib/stats';
-import { reconcile } from './lib/sync';
-import { loadVideoData, saveField, videoStorageKey } from './lib/storage';
+import { NO_DELETIONS, forgetDeletions, hasDeletions, reconcile, recordDeletions } from './lib/sync';
+import type { Deletions } from './lib/sync';
+import { loadDeletions, loadVideoData, saveField, videoStorageKey } from './lib/storage';
 import type { Combination, Fighter, Outcome, ReviewStatus, Reviews, Round, Tag } from './lib/types';
 
 const fighterName = (f: Fighter) => (f === 'you' ? 'You' : 'Opponent');
@@ -70,6 +71,8 @@ export default function App() {
   const loadToken = useRef(0);
   /** Latest data, readable from async code without stale closures. */
   const dataRef = useRef<VideoData>({ tags: [], reviews: {}, rounds: [] });
+  /** Ids deleted here that the server may still have; stops a merge from bringing them back. */
+  const deletedRef = useRef<Deletions>(NO_DELETIONS);
   const [toast, setToast] = useState('');
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Most recently added tag, for the outcome (Q/W/E) and undo (Z) shortcuts. */
@@ -103,11 +106,21 @@ export default function App() {
     setSyncStatus('saving');
     const id = serverVideo.id;
     const payload = { tags, reviews, rounds };
+    const key = storageKey;
+    const token = loadToken.current;
     const timer = setTimeout(() => {
-      api.putData(id, payload).then(() => setSyncStatus('saved')).catch(() => setSyncStatus('error'));
+      const sent = deletedRef.current;
+      api.putData(id, payload).then(() => {
+        setSyncStatus('saved');
+        // The server now has exactly `payload`, so these deletions are done (unless another video was opened since).
+        if (hasDeletions(sent) && token === loadToken.current) {
+          deletedRef.current = forgetDeletions(deletedRef.current, sent);
+          saveField(key, 'deleted', deletedRef.current);
+        }
+      }).catch(() => setSyncStatus('error'));
     }, 700);
     return () => clearTimeout(timer);
-  }, [tags, reviews, rounds, serverVideo]);
+  }, [tags, reviews, rounds, serverVideo, storageKey]);
 
   function notify(message: string) {
     if (toastTimer.current) clearTimeout(toastTimer.current);
@@ -119,15 +132,28 @@ export default function App() {
 
   const storageWarning = () => notify('⚠ Browser storage is unavailable. Export JSON to keep your work.');
 
+  function setDeletions(next: Deletions) {
+    deletedRef.current = next;
+    saveField(storageKey, 'deleted', next);
+  }
+  /** Notes anything an edit removed, so a later merge with the server doesn't bring it back. */
+  function trackDeletions(after: Partial<VideoData>) {
+    const before = dataRef.current;
+    setDeletions(recordDeletions(before, { ...before, ...after }, deletedRef.current));
+  }
+
   function updateTags(next: Tag[]) {
+    trackDeletions({ tags: next });
     setTags(next);
     if (!saveField(storageKey, 'tags', next)) storageWarning();
   }
   function updateReviews(next: Reviews) {
+    trackDeletions({ reviews: next });
     setReviews(next);
     if (!saveField(storageKey, 'reviews', next)) storageWarning();
   }
   function updateRounds(next: Round[]) {
+    trackDeletions({ rounds: next });
     setRounds(next);
     if (!saveField(storageKey, 'rounds', next)) storageWarning();
   }
@@ -148,6 +174,8 @@ export default function App() {
     setTags(data.tags);
     setReviews(data.reviews);
     setRounds(data.rounds);
+    dataRef.current = data;
+    deletedRef.current = loadDeletions(key);
     lastTagId.current = null;
     hydrated.current = false;
     setServerVideo(null);
@@ -163,7 +191,7 @@ export default function App() {
       const video = await api.registerVideo({ file_name: file.name, size: file.size, last_modified: file.lastModified });
       const remote = await api.getData(video.id);
       if (token !== loadToken.current) return; // another video was opened meanwhile
-      const result = reconcile(dataRef.current, remote);
+      const result = reconcile(dataRef.current, remote, deletedRef.current);
       if (result.source === 'server' || result.source === 'merged') {
         setTags(result.data.tags);
         setReviews(result.data.reviews);
